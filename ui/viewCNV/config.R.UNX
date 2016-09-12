@@ -1,0 +1,14 @@
+# These are OS and file system-dependent settings that must be manually configured
+
+shell <- "/bin/bash -lc"
+
+extent.offset <- 12*100/2 # FIXME: outputs should set map positions centered in their windows
+
+profile.fn <- "/home/unix/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.dat.gz"
+
+data.dir <- "/home/unix/dkulp/data/cnv_seg.12.500"
+
+tmp.dir <- "/tmp"
+
+input.dump.fn <- "/tmp/inputdump.R"
+

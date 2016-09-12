@@ -1,0 +1,107 @@
+#!/usr/bin/perl -w
+#
+# Input is VCF of gstrip deletions
+# Output is one line per sample per variant:
+#
+#SAMPLE	ID	CHROM	START	END	GT	GQ
+#09C90050	DEL_P0556_6	20	348403	351100	1	99
+#10C103396	DEL_P0556_6	20	348403	351100	1	99
+#09C92633	DEL_P0556_7	20	433638	434759	1	21
+#
+# An optional sites file (-s) is just used to confine the output to minimum and maximum regions on chromosomes.
+# Filter out regions below threshold length (-l)
+# Filter out regions below CNQ (-q) - applies to CNV-style input only
+# Write results to separate files in directory (-d) for each sample and genotype.
+#
+# Usage: gs_del2tab -s site.txt -l 1200 -q 13 -d dir < VCF 
+
+use strict;
+use Getopt::Std;
+use FileHandle;
+
+my %opts;
+getopts("s:l:q:d:", \%opts);
+my (%max, %min);
+if (exists $opts{'s'}) {
+    my $sites = new FileHandle $opts{'s'} or die $!;
+    while (<$sites>) {
+	my ($id, $chr, $start, $end) = split;
+	$max{$chr} = $end if (!defined($max{$chr}) || $max{$chr} < $end);
+	$min{$chr} = $start if (!defined($min{$chr}) || $min{$chr} > $start);
+    }
+}
+
+if (exists $opts{'d'}) {
+    system("mkdir -p $opts{'d'}");
+}
+
+my @samples;
+while (<>) {
+    next if /^\#\#/;
+    if (/^\#/) {
+	@samples = split;
+	splice(@samples, 0, 9); # remove first 9 columns, leaving sample names
+	print "SAMPLE\tID\tCHROM\tSTART\tEND\tGT\tGQ\tREADCOUNT\n" unless $opts{'d'};
+	next;
+    }
+    my ($chr, $start, $id, $ref, $alt, $qual, $filter, $info, $format, @cols) = split;
+
+    if ($alt eq '<DEL>') {
+	die "Unexpected format: $format" unless $format =~ 'GT(:CNF)?:FT:GL:GP:GQ';
+    } elsif ($alt eq '<CNV>') {
+	die "Unexpected format: $format" unless $format =~ 'GT:CN:CNF:CNL:CNP:CNQ';
+    } else {
+	warn "Unrecognized alt type $alt";
+	next;
+    }
+    
+    my ($end) = $info =~ /\bEND=(\d+);/;
+
+    next if defined $opts{l} and $end - $start < $opts{l};
+
+    my ($sampleEvidence) = $info =~ /;GSSAMPLES=([\w,]+);/;
+    if (!defined ($sampleEvidence)) { $sampleEvidence = ''; }
+    my (@sampleEvidence) = split(/,/,$sampleEvidence);
+    my %sampleEvidence = ();
+    foreach my $sample (@sampleEvidence) { $sampleEvidence{$sample}++; }
+    
+
+    next unless (!exists $opts{'s'} || (exists $max{$chr} && $start < $max{$chr} && $end > $min{$chr}));
+
+    for (my $i=0; $i < @samples; $i++) {
+	if ($alt eq '<DEL>') {
+	    my ($gt, $cnf, $ft, $gl, $gp, $gq);
+	    if ($format =~ /CNF/) {
+		($gt, $cnf, $ft, $gl, $gp, $gq) = split(/:/,$cols[$i]);
+	    } else {
+		($gt, $ft, $gl, $gp, $gq) = split(/:/,$cols[$i]);
+	    }
+	    next if $gt eq '.';
+	    if ($gt !~ /0\/0|0\/1|1\/1/) {
+		warn "$id sample $i genotype $gt\n";
+	    }
+	    elsif ($ft eq 'PASS') {
+		my $gt_print = 2;
+		if ($gt eq '0/1') { $gt_print = 1; }
+		elsif ($gt eq '1/1') { $gt_print = 0; }
+
+		my $outFh = new FileHandle ">-";
+		if (exists $opts{'d'}) {
+		    $outFh = new FileHandle ">>$opts{'d'}/$samples[$i].$gt_print.txt" or die $!;
+		}
+
+		$outFh->print(join("\t", ($samples[$i], $id, $chr, $start, $end, $gt_print, $gq, $sampleEvidence{$samples[$i]} || 0)),"\n") unless $gt_print == 2;
+	    }
+	} else { # <CNV>
+	    my ($gt, $cn, $cnf, $cnl, $cnp, $cnq, $ft) = split(/:/,$cols[$i]);
+	    next if $cn > 1 or !defined $ft or $ft ne 'PASS' or (defined $opts{q} and $cnq < $opts{q});
+
+	    my $outFh = new FileHandle ">-";
+	    if (exists $opts{'d'}) {
+		$outFh = new FileHandle ">>$opts{'d'}/$samples[$i].$cn.txt" or die $!;
+	    }
+
+	    $outFh->print(join("\t", ($samples[$i], $id, $chr, $start, $end, $cn, $cnq, 0)),"\n");
+	}
+    }
+}
