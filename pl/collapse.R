@@ -20,7 +20,6 @@ csm <- as.tbl(cn.segs.merged)
 
 # overlap(df) - returns a flattened data.frame across all samples
 overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
-  cat(sprintf("%s\n",df$cn[1]))
   if (nrow(df)==1) {
     return(data.frame(i=1,j=1,start.map=df[[start.name]],end.map=df[[end.name]],
                       x.min=df[[start.name]], x.max=df[[start.name]],
@@ -65,4 +64,8 @@ overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
   
 }
 
-csm.flt <- ddply(csm, .(cn), overlap)
+cn.segs.merged <- as.tbl(mutate(ddply(csm, .(cn, chr), overlap), seg=substr(seg,1,100), copy.number=addNA(as.factor(cn))))
+cn.segs.merged$.id <- 'All'
+write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.flt.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+
