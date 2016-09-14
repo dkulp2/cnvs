@@ -61,7 +61,7 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
            cn.min=min(df2[[label]][i:j]), cn.max=max(df2[[label]][i:j]), 
            n=j-i+1, one.cn=cn.min==cn.max,
            cq.min=min(df2[[cq]][i:j]), cq.max=max(df2[[cq]][i:j]),
-           seg=paste0(df2[[seg]][i:j], collapse = ';'),
+           seg=paste0(unique(df2[[seg]][i:j]), collapse = ';'),
            paired.reads.min=min(df2[[paired.reads]][i:j]),
            paired.reads.max=max(df2[[paired.reads]][i:j]))
   }
