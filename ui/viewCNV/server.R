@@ -1,14 +1,6 @@
-#
-# This is the server logic of a Shiny web application. You can run the 
-# application by clicking 'Run App' above.
-#
-# Find out more about building applications with Shiny here:
-# 
-#    http://shiny.rstudio.com/
-#
-
 library(shiny)
 library(plyr)
+library(dplyr)
 library(ggplot2)
 library(stats)
 library(foreach)
@@ -26,10 +18,11 @@ source("config.R")
 irs.fn <- paste0(data.dir,"/cnv_segs.irs")
 probe.fn <- paste0(data.dir,"/probes.txt")
 
+# KNOWNS
 #gs_dels.fn <- paste0(data.dir,"/gs_dels.txt")
 gs_dels.fn <- paste0(data.dir,"/../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
 # NOT USED: gs_cnvs.fn <- paste0(data.dir,"../gpc_wave2/gs_cnv.genotypes.txt")
-gs_cnvdels_flat.fn <- paste0(data.dir,"/../gpc_wave2/gs_cnv_del.genotypes.txt")
+gs_cnvdels_flat.fn <- paste0(data.dir,"/../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
 
 cnv.geno.fn <- paste0(data.dir,"/sites_cnv_segs.txt.cnvgeno.srt.gz")
 cnv.hires.geno.fn <- paste0(data.dir,"/hires_sites_cnv_segs.txt.cnvgeno.srt.gz")
@@ -66,9 +59,6 @@ load(cn.segs.merged.fn)
 
 # Define server logic required to draw a histogram
 shinyServer(function(input, output, session) {
-  
-  # load the selection options for known sites
-  updateSelectInput(session, 'candidate', choices=c("Choose Known Deletion"="",top.gs.deletions))
   
   pred.deletions <- reactive({
     if (input$pred.order == 'chrom') {
@@ -116,6 +106,11 @@ shinyServer(function(input, output, session) {
     gdo$evidence <- ' Known'
     gdo$copy.number <- addNA(as.factor(gdo$cn))
     return(gdo)
+  })
+  
+  # load the selection options for known sites
+  observe({
+    updateSelectInput(session, 'candidate', choices=c("Choose Known Deletion"="",unique(gs.dels.orig()$seg)))
   })
   
   observe({
@@ -214,15 +209,17 @@ shinyServer(function(input, output, session) {
   # prev candidate
   observe({
     input$candidate.prev
-    idx <- which(top.gs.deletions == isolate(input$candidate))
-    if (length(idx)>0 && idx > 1) { updateSelectInput(session,'candidate',selected=top.gs.deletions[idx-1]) }
+    candidates <- unique(gs.dels.orig()$seg)
+    idx <- which(candidates == isolate(input$candidate))
+    if (length(idx)>0 && idx > 1) { updateSelectInput(session,'candidate',selected=candidates[idx-1]) }
   })
   
   # next candidate
   observe({
     input$candidate.next
-    idx <- which(top.gs.deletions == isolate(input$candidate))
-    if (length(idx)>0 && idx < length(top.gs.deletions)) { updateSelectInput(session,'candidate',selected=top.gs.deletions[idx+1]) }
+    candidates <- unique(gs.dels.orig()$seg)
+    idx <- which(candidates == isolate(input$candidate))
+    if (length(idx)>0 && idx < length(candidates)) { updateSelectInput(session,'candidate',selected=candidates[idx+1]) }
   })
   
   # zoom out 1.5x
