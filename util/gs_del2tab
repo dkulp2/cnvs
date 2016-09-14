@@ -72,8 +72,10 @@ while (<>) {
 	if ($alt eq '<DEL>') {
 	    my ($gt, $cnf, $ft, $gl, $gp, $gq);
 	    if ($format =~ /CNF/) {
+		die "Bad FORMAT field. Make me smarter." unless $format eq 'GT:CNF:FT:GL:GP:GQ';
 		($gt, $cnf, $ft, $gl, $gp, $gq) = split(/:/,$cols[$i]);
 	    } else {
+		die "Unrecognized FORMAT field. At one time I saw a VCF without CNF, but not recently.";
 		($gt, $ft, $gl, $gp, $gq) = split(/:/,$cols[$i]);
 	    }
 	    next if $gt eq '.';
@@ -94,7 +96,7 @@ while (<>) {
 	    }
 	} else { # <CNV>
 	    my ($gt, $cn, $cnf, $cnl, $cnp, $cnq, $ft) = split(/:/,$cols[$i]);
-	    next if $cn > 1 or !defined $ft or $ft ne 'PASS' or (defined $opts{q} and $cnq < $opts{q});
+	    next if $cn > 1 or (defined $ft and $ft ne 'PASS') or (defined $opts{q} and $cnq < $opts{q});
 
 	    my $outFh = new FileHandle ">-";
 	    if (exists $opts{'d'}) {
