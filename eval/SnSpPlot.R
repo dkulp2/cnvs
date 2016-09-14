@@ -1,20 +1,33 @@
+library(plyr)
 library(dplyr)
+library(ggplot2)
 
 db <- src_postgres(dbname='seq', host='localhost', port=5432, user='postgres')
-print(src_tbls(db))
-sn <- db %>% tbl('base_sensitivity')
 
-ovlp <- db %>% tbl('overlap') %>% collect
-site.sn <- ddply(ovlp, .(k_geno), function(df) {
-  ldply(seq(0.1,1,0.1), function(thresh) {
-    with(df, data.frame(coverage=thresh,
-                        frac=length(unique(k_id[overlap_len/known_len >= thresh]))/(length(unique(k_id)))))
+plot.site <- function(kind, title, xlabel, ylabel, geno.expr, tresh.expr, id.fld, facet.expr, filter.expr=expression(TRUE)) {
+  ovlp <- db %>% tbl('overlap') %>% filter((k_kind==kind || p_kind==kind)) %>% filter(filter.expr) %>% collect
+  site <- ddply(ovlp, geno.expr, function(df) { 
+    ldply(seq(0.1,1,0.1), function(thresh) {
+      with(df, data.frame(overlap=thresh,
+                          frac=length(unique(df[[id.fld]][eval(thresh.expr) >= thresh]))/(length(unique(df[[id.fld]])))))
+    })
   })
-})
-ggplot(na.omit(site.sn), aes(x=coverage, y=frac)) + geom_point() + geom_line() + 
-  facet_grid(.~k_geno) +
-  ggtitle("Site Sensitivity:\nSites Found / Known Sites\n at Fraction Coverage or Greater") + 
-  ylab('Sn') + xlab('Fraction of known DEL overlapped by prediction')
+  ggplot(na.omit(site), aes(x=overlap, y=frac)) + geom_point() + geom_line() + 
+    facet_grid(facet.expr) +
+    ggtitle(title) + 
+    ylab(ylabel) + xlab(xlabel)
+  return(ovlp)
+}
+
+plot.site('SITE', "Site Sensitivity:\nSites Found / Known Sites (CN={0,1}, >1200 nt)\n at Fraction Overlap or Greater", 
+          'Fraction of known DEL overlapped by prediction', 'Sn', 
+          quote(k_geno), quote(overlap_len/known_len), 'k_id', .~k_geno,
+          quote(k_geno %in% c('1','0') & known_len > 1200))
+plot.site('SITESP', "Site Specificity:\nTrue Sites / Predicted Sites (CN={0,1}, >1200 nt)\n at Fraction Overlap or Greater", 
+          'Fraction of predicted DEL overlapped by known', 'Sp', 
+          quote(p_geno), quote(overlap_len/pred_len), 'p_id', .~p_geno,
+          quote(!is.na(p_geno) & p_geno %in% c('1','0') & pred_len > 1200))
+
 
 ovlp.srt <- ddply(arrange(subset(ovlp, !is.na(k_geno)), known_len), .(k_geno),
                   mutate,
@@ -29,20 +42,9 @@ sn.geno <- ddply(ovlp.srt, .(k_geno), summarize, sn=sum(overlap_len)/sum(known_l
 
 ggplot(ovlp.srt, aes(x=known_len, y=sn)) + geom_point() + 
   xlab("Length of Known DEL") + facet_grid(.~k_geno) +
-  ggtitle("Base-Level Sensitivity\nup to Length") + xlim(0,5000) +
+  ggtitle("Base-Level Sensitivity\nup to Length") + # xlim(0,5000) +
   geom_hline(aes(yintercept=sn), sn.geno) + geom_label(aes(label=sprintf("%.0f%%",sn*100), y=sn), sn.geno, x=max(ovlp.srt$known_len)/2)
 
-ovlp2 <- db %>% tbl('overlap2') %>% filter(p_geno %in% c('1','0')) %>% collect
-site.sp <- ddply(ovlp2, .(p_geno), function(df) {
-  ldply(c(0.000001,seq(0.1,1,0.1)), function(thresh) {
-    with(df, data.frame(coverage=thresh, 
-                        frac=length(unique(p_id[overlap_len/pred_len >= thresh]))/(length(unique(p_id)))))
-  })
-})
-ggplot(na.omit(site.sp), aes(x=coverage, y=frac)) + geom_point() + geom_line() + 
-  facet_grid(.~p_geno) +
-  ggtitle("Site Specificity:\nTrue Sites / Predicted Sites\nat Fraction Coverage or Greater") + 
-  ylab('Sp') + xlab('Fraction of predicted DEL overlapped by known')
 
 ovlp2.srt <- ddply(arrange(subset(ovlp2, !is.na(p_geno)), pred_len), .(p_geno),
                    mutate,
@@ -55,9 +57,7 @@ ggplot(ovlp2.srt, aes(x=pred_len, y=sp)) + geom_point() + xlab("Length of predic
   ggtitle("Base-Level Specificity\nup to Length") + facet_grid(.~p_geno) +
 geom_hline(aes(yintercept=sp), sp.geno) + geom_label(aes(label=sprintf("%.0f%%",sp*100), y=sp), sp.geno, x=max(ovlp2.srt$pred_len)/2)
 
-ovlp3 <- db %>% tbl('overlap3') %>% collect
-ovlp3$start.diff <- ovlp3$start_pos - ovlp3$b_start
-ovlp3$end.diff <- ovlp3$end_pos - ovlp3$b_end
-ovlp3b <- subset(ovlp3, abs(end.diff) < 5000 & abs(start.diff) < 5000)  # removes outliers.
-qplot(ovlp3b$start.diff, ovlp3b$end.diff) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets') + geom_vline(xintercept=0) + geom_hline(yintercept=0)
+ovlp3 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEG' && p_kind=='SAMPLESEG') %>% collect
+ggplot(ovlp3, aes(x=start_offset, y=end_offset)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets') + geom_vline(xintercept=0) + geom_hline(yintercept=0) +
+  geom_density_2d() + xlim(-1000,1000) + ylim(-1000,1000)
 
