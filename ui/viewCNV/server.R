@@ -54,7 +54,7 @@ probes.orig <- read.table(probe.fn)
 colnames(probes.orig) <- c('seg','chr','start.map','end.map')
 cat(sprintf("Loaded %s probes from %s\n",nrow(probes.orig),probe.fn))
 
-cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.csm.Rdata")
+cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.smlcsm.Rdata")
 load(cn.segs.merged.fn)
 
 # Define server logic required to draw a histogram
@@ -161,7 +161,7 @@ shinyServer(function(input, output, session) {
       gs.row <- cn.segs.merged[cn.segs.merged$seg == input$predicted & !is.na(cn.segs.merged$cn),]
       cat(sprintf("Found %s rows for prediction %s\n", nrow(gs.row), input$predicted))
       print(gs.row)
-      seg.sample <- gs.row[,'.id']
+      seg.sample <- gs.row[gs.row$cn != 2,'.id']   # hack. very rarely the seg name is the same for the WT
       seg.chr <- gs.row[1,'chr']
       seg.start <- gs.row[1,'start.map']
       seg.end <- gs.row[1,'end.map']
@@ -279,13 +279,17 @@ shinyServer(function(input, output, session) {
     # } else {
     #   cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.csm.Rdata")
     # }
-    cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.csm.Rdata")
-    load(cn.segs.merged.fn)
-    cn.segs.merged <- select(cn.segs.merged, .id, cn, chr, start.map, end.map, copy.number, len, seg)
-    cn.segs.merged$label <- sprintf("%s_%s", cn.segs.merged$seg, cn.segs.merged$.id)
-    cn.segs.merged$evidence <- 'Basic'
-    cat(sprintf("Loaded %s CNVs from %s\n",nrow(cn.segs.merged), cn.segs.merged.fn))
-    csm.all <- cn.segs.merged
+    csm.all <- data.frame()
+    
+    if (input$show_basic) {
+      cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.csm.Rdata")
+      load(cn.segs.merged.fn)
+      cn.segs.merged <- select(cn.segs.merged, .id, cn, chr, start.map, end.map, copy.number, len, seg)
+      cn.segs.merged$label <- sprintf("%s_%s", cn.segs.merged$seg, cn.segs.merged$.id)
+      cn.segs.merged$evidence <- 'Basic'
+      cat(sprintf("Loaded %s CNVs from %s\n",nrow(cn.segs.merged), cn.segs.merged.fn))
+      csm.all <- rbind(csm.all, cn.segs.merged)
+    }
     
     if (input$show_extended_cnvs) {
       cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.ncsm.Rdata")
