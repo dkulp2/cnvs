@@ -34,3 +34,7 @@ to be very good."
 The known sets are flattened for evaluation purposes by manually running overlap.R.
 See doc in file for more info. It creates _flt and _xlft files for evaluation on a
 per sample and a per site basis.
+Discordant calls are marked with a CN=99.
+
+====================
+
