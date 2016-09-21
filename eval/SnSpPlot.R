@@ -31,7 +31,7 @@ snsp.plot <- function(df, title, xlabel, ylabel, with.lines=TRUE) {
   p <- ggplot(na.omit(df), aes(x=overlap, y=frac)) + geom_point() +
     facet_grid(~facet) +
     ggtitle(title) + 
-    ylab(ylabel) + xlab(xlabel)
+    ylab(ylabel) + xlab(xlabel) + ylim(0,1)
   if (with.lines) { p <- p + geom_line() }
   return(p)
 }
@@ -53,13 +53,22 @@ snsp.comp <- function(comp.func, comp.func.name, intvls, with.lines=TRUE) {
   
   
   ret <- snsp.stats('SAMPLESEG',  
-                   .(k_geno,k_id), quote(overlap_len/known_len), 'k_sample', comp.func,
-                   quote(!is.na(k_geno) & k_geno %in% c('1','0') & known_len > 1200), intvls)
+                    .(k_geno,k_id), quote(overlap_len/known_len), 'k_sample', comp.func,
+                    quote(!is.na(k_geno) & k_geno %in% c('1','0') & known_len > 1200), intvls)
+
+  x <- ret$res
+  x2 <- ldply(c(1,2,10,50,100), function(sample.count) {
+    ddply(x, .(k_geno, overlap), summarize, sample.count=sample.count, successes=sum(success>=pmin(sample.count,total)), sites=length(success), frac=successes/sites)
+  })
+  x2$sample.count <- factor(x2$sample.count)
+  x2$facet <- sprintf("%s (n=%s)", x2$k_geno, x2$sites)
+  print(ggplot(na.omit(x2), aes(x=overlap, y=frac, color=sample.count)) + geom_line() + facet_grid(.~facet) + ggtitle("Site Sn given required sample success") + ylim(0,1))
+
   res <- ddply(ret$res, .(k_geno, overlap), summarize, success=sum(success), total=sum(total), frac=success/total)
   res$facet <- sprintf("%s (n=%s)", res$k_geno, res$total)
   print(snsp.plot(res, 
                   sprintf("SampleSeg Sensitivity:\nSampleSeg Found / Known SampleSegs (CN={0,1}, >1200 nt)\n at Fraction Overlap %s", comp.func.name), 
-                       'Fraction of known SampleSeg overlapped by prediction', 'Sn', with.lines))
+                  'Fraction of known SampleSeg overlapped by prediction', 'Sn', with.lines))
   
   
   ret <- snsp.stats('SAMPLESEGSP',  
@@ -70,46 +79,46 @@ snsp.comp <- function(comp.func, comp.func.name, intvls, with.lines=TRUE) {
   print(snsp.plot(res, 
                   sprintf("SampleSeg Specificity:\nTrue SampleSeg / Predicted SampleSegs (CN={0,1}, >1200 nt)\n at Fraction Overlap %s", comp.func.name),
                   'Fraction of predicted SampleSeg overlapped by known', 'Sp', with.lines))
+
+  
 }
 
 snsp.comp(greater.or.equal,'or Greater', thresh.intvls[2:length(thresh.intvls)])
 snsp.comp(less.or.equal,'or Lesser', thresh.intvls[1:(length(thresh.intvls)-1)])
-snsp.comp(intvl.bin, 'Bin', thresh.intvls[2:(length(thresh.intvls)-2)], with.lines=FALSE)
+#snsp.comp(intvl.bin, 'Bin', thresh.intvls[2:(length(thresh.intvls)-2)], with.lines=FALSE)
 
 
+# BASE STATS - stratify by length
+ovlp.sn <- db %>% tbl('overlap') %>% filter((k_kind=='SAMPLESEG' || p_kind=='SAMPLESEG')) %>% filter(!is.na(k_geno) & k_geno %in% c('1','0')) %>% collect
 
-ovlp.srt <- ddply(arrange(subset(ovlp, !is.na(k_geno)), known_len), .(k_geno),
-                  mutate,
-                  tot_known_len=cumsum(known_len),
-                  tot_overlap_len=cumsum(overlap_len),
-                  sn=tot_overlap_len/tot_known_len)
+ovlp.sn.srt <- ddply(arrange(ovlp.sn, known_len), .(k_geno),
+                     mutate,
+                     tot_known_len=cumsum(known_len),
+                     tot_overlap_len=cumsum(overlap_len),
+                     sn=tot_overlap_len/tot_known_len)
+base.sn <- ddply(ovlp.sn.srt, .(k_geno), summarize, sn=sum(overlap_len)/sum(known_len))
 
-sn.geno <- ddply(ovlp.srt, .(k_geno), summarize, sn=sum(overlap_len)/sum(known_len))
-
-
-
-
-ggplot(ovlp.srt, aes(x=known_len, y=sn)) + geom_point() + 
+ggplot(ovlp.sn.srt, aes(x=known_len, y=sn)) + geom_point() + 
   xlab("Length of Known DEL") + facet_grid(.~k_geno) +
   ggtitle("Base-Level Sensitivity\nup to Length") + # xlim(0,5000) +
-  geom_hline(aes(yintercept=sn), sn.geno) + geom_label(aes(label=sprintf("%.0f%%",sn*100), y=sn), sn.geno, x=max(ovlp.srt$known_len)/2)
+  geom_hline(aes(yintercept=sn), base.sn) + geom_label(aes(label=sprintf("%.0f%%",sn*100), y=sn), base.sn, x=max(ovlp.sn.srt$known_len)/2)
 
+ovlp.sp <- db %>% tbl('overlap') %>% filter((k_kind=='SAMPLESEG' || p_kind=='SAMPLESEG')) %>% filter(!is.na(p_geno) & p_geno %in% c('1','0')) %>% collect
 
-ovlp2.srt <- ddply(arrange(subset(ovlp2, !is.na(p_geno)), pred_len), .(p_geno),
+ovlp.sp.srt <- ddply(arrange(ovlp.sp, pred_len), .(p_geno),
                    mutate,
                    tot_pred_len=cumsum(pred_len),
                    tot_overlap_len=cumsum(overlap_len),
                    sp=tot_overlap_len/tot_pred_len)
-
-sp.geno <- ddply(ovlp2.srt, .(p_geno), summarize, sp=sum(overlap_len)/sum(pred_len))
-ggplot(ovlp2.srt, aes(x=pred_len, y=sp)) + geom_point() + xlab("Length of predicted DEL") + 
+base.sp <- ddply(ovlp.sp.srt, .(p_geno), summarize, sp=sum(overlap_len)/sum(pred_len))
+ggplot(ovlp.sp.srt, aes(x=pred_len, y=sp)) + geom_point() + xlab("Length of predicted DEL") + 
   ggtitle("Base-Level Specificity\nup to Length") + facet_grid(.~p_geno) +
-geom_hline(aes(yintercept=sp), sp.geno) + geom_label(aes(label=sprintf("%.0f%%",sp*100), y=sp), sp.geno, x=max(ovlp2.srt$pred_len)/2)
+geom_hline(aes(yintercept=sp), base.sp) + geom_label(aes(label=sprintf("%.0f%%",sp*100), y=sp), base.sp, x=max(ovlp.sp.srt$pred_len)/2)
 
 
-
+# Edge stats - only for knowns that overlap predictions
 ovlp3 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEG' && p_kind=='SAMPLESEG') %>% collect
-ggplot(ovlp3, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Conserved GStrip Deletions") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-1000,1000) + ylim(-1000,1000) # + geom_density_2d()
+ggplot(ovlp3, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Conserved GStrip Deletions") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-1000,1000) + ylim(-1000,1000) + geom_density_2d(color='gray40') + guides(size=FALSE)
 
 ovlp4 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEGSP' && p_kind=='SAMPLESEGSP') %>% collect
 ggplot(ovlp4, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Any GStrip CNV") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-10000,10000) + ylim(-10000,10000) # + geom_density_2d()
