@@ -38,6 +38,10 @@ if (file.exists(log.fn)) {
 pad <- 5000  # add pad bases to L and R of target region
 too.big <- 500000  # don't retrieve big data when window is larger than too.big
 
+# common colors for copy number
+cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#beaed4", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999"), 
+                                name="CN")
+
 frags.cmd <- sprintf("%s 'zcat %s | head -1'", shell, profile.fn)
 cat(frags.cmd,"\n",file=stderr())
 frags.header <- unlist(strsplit(system(frags.cmd, intern=T),"\t"))
@@ -359,7 +363,7 @@ shinyServer(function(input, output, session) {
     if (nrow(cn.segs.sel)>0) { cn.segs.sel$paired.reads <- NA }
     disp <- rbind(gs.del.sel, cn.segs.sel)
     
-    if (nrow(probes) > 0) {
+    if (nrow(probes) > 0 && FALSE) {  # remove probes 
       disp2 <- rbind(disp, 
                      data.frame(.id='Probe',cn=NA,copy.number=NA,chr=probes$chr,start.map=probes$start.map,end.map=probes$end.map,seg=probes$seg,target=FALSE,evidence="Array",paired.reads=NA))
     } else { disp2 <- disp }
@@ -367,6 +371,9 @@ shinyServer(function(input, output, session) {
     disp3 <- join(disp2, subset(irs, select=-c(chr,start,end)), by="seg", type="left")
     disp3$Pval <- ifelse(is.na(disp3$Pval),1,disp3$Pval)
     disp3$Phred <- ifelse(disp3$Pval==0, 100, -log10(disp3$Pval)*10)
+    
+    # max out CN at 5. Set fixed levels and labels for fixed legend
+    disp3$cn.disp <- factor(ifelse(disp3$cn==99, disp3$cn, ifelse(disp3$cn > 5, 5, disp3$cn)), levels=c('0','1','2','3','4','5','99'), labels=c('0','1','2','3','4','5+','Disc'))
     
     save(disp3,file=sprintf('%s/disp3.Rdata',tmp.dir))
     return(disp3)
@@ -454,8 +461,14 @@ shinyServer(function(input, output, session) {
     obs_exp_ratio.df$pos <- as.integer(1:nrow(obs_exp_ratio.df))
     
     oer <- gather(obs_exp_ratio.df, sample, ratio, -pos)
+    oer$left <- frags[oer$pos,'START']
+    oer$right <- frags[oer$pos + input$win.size - 1,'END']
     oer$start.map <- frags[oer$pos,'START'] + (frags[oer$pos + input$win.size - 1,'END'] - frags[oer$pos,'START'])/2
     oer$sample.type <- ifelse(oer$sample == 'site.median','median', ifelse(oer$sample %in% input$seg.sample, 'target','other'))
+    if (all(oer$sample.type != 'target')) {
+      cat("Can't find any fragments with selected samples: \n"); print(input$seg.sample)
+    }
+    save(oer,file=sprintf('%s/oer.Rdata',tmp.dir))
     return(oer)  
   })
   
@@ -475,14 +488,14 @@ shinyServer(function(input, output, session) {
     cat("cnv.disp\n")
     print(head(cnv.disp))
     save(cnv.disp,file=sprintf('%s/cnv.disp.Rdata',tmp.dir))
-    if (input$show_CN) {
-      plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=copy.number, size=target)) 
-    } else if (input$show_readPairs) {
-      plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=paired.reads, size=target)) + scale_color_gradient2() 
+    
+    if (!input$show_readPairs) {
+      plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=cn.disp, size=target)) + cn.colors 
     } else {
-      plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=Phred, size=target)) + scale_color_gradient(limits=c(0,100))
-      
-    }
+      plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=paired.reads, size=target)) + scale_color_gradient2() 
+    }# NOT USED else {
+    #  plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=Phred, size=target)) + scale_color_gradient(limits=c(0,100))
+    #}
     if (nrow(subset(cnv.disp,evidence=='Array'))>0) {
       plt <- plt + geom_point(data=subset(cnv.disp, evidence=='Array'), size=5, color='black')
     }
@@ -521,6 +534,25 @@ shinyServer(function(input, output, session) {
       xbounds()
   })
   
+  # merge frag and geno segments and color fragment by geno label
+  # requires the windows to be the same size
+  genoFragPlot <- reactive({
+    oer.df <- oer()
+    wg.df <- winGeno()
+    
+    # fix to use common column names
+    oer.df <- rename(oer.df, start=left, end=right)
+    
+    oer.wg <- left_join(subset(oer.df, sample.type != 'median'), wg.df, by=c('start','end','sample'))
+    oer.wg$cn <- as.numeric(as.character(oer.wg$cn))
+    oer.wg$cn <- ifelse(is.na(oer.wg$cn),99, oer.wg$cn)
+    oer.wg$sample.type.size <- ifelse(oer.wg$sample.type=='target',2,1) # this doesn't work! I want 1px or 2px
+    oer.wg$cn.disp <- factor(ifelse(oer.wg$cn==99, oer.wg$cn, ifelse(oer.wg$cn > 5, 5, oer.wg$cn)), levels=c('0','1','2','3','4','5','99'), labels=c('0','1','2','3','4','5+','Disc'))
+    
+    ggplot(oer.wg, aes(x=start.map, y=ratio, yend=ratio, color=cn.disp, group=sample)) +geom_step() + cn.colors + theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0.5),'inches')) +
+      xbounds() + guides(color=FALSE)
+  })
+
   output$expPlot <- renderPlot({
     expected <- expected()
     colors <- c(target='#FF0000',other='#222222')
@@ -537,7 +569,7 @@ shinyServer(function(input, output, session) {
   output$allThree <- renderPlot({
     plots <- list()
     if (input$show_cnv) { plots$cnv = cnvPlot() }
-    if (input$show_frag) { plots$frag = fragPlot() }
+    if (input$show_frag) { if (input$color_frag) { plots$frag=genoFragPlot() } else { plots$frag = fragPlot() } }
     if (input$show_winGeno) { plots$winGeno = winGenoPlot() }
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
   })
@@ -558,4 +590,5 @@ shinyServer(function(input, output, session) {
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
     
   })
+  
 })
