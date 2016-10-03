@@ -2,6 +2,9 @@
 #
 # read Bob's genotype output in VCF format and output lines in his dat file format.
 #
+# Output is one line per site with call and quality columns per sample:
+# BIN	CHR	START	END	PASS	09C90050	10C103396...	09C90050_CNQ	10C103396_CNQ...
+#
 # Usage: gunzip -c windows.vcf.gz | vcf2tab > windows.dat
 
 my $j = 1;

@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 #
-# profle2db -i profile.gz -seg outseg.txt.gz -p outpro.txt.gz
+# profle2db.pl -i profile.gz -s outseg.txt.gz -p outpro.txt.gz
 #
 # read compressed profile, write the data to two tables:
 # outseg.txt.gz - tab delimited contains BIN, CHR, START, END, ELENGTH, GCRATIO

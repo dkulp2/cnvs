@@ -38,3 +38,24 @@ Discordant calls are marked with a CN=99.
 
 ====================
 
+Load database with profile data by first creating two text files from the profile:
+
+ run profile2db.pl -i /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.dat.gz -s /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.seg.txt.gz -p /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.pro.txt.gz
+
+And then editing profile2db.sql to set the correct filenames and then executing, e.g.
+
+ psql < profile2db.sql
+
+====================
+
+OLD NOTES (probably obsolete):
+
+Data prep:
+Retrieve profile*.gz(.tbi) files
+Retrieve irs_matrix_OMNI25.dat
+Retrieve gs_dels.genotypes.vcf.gz(.tbl)
+
+Create a chrom 20 version of gs_dels with
+ tabix2 -o ./gs_dels.chr20.vcf.gz gs_dels.genotypes.vcf.gz 20:1-200000000
+
+

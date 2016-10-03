@@ -1,9 +1,12 @@
 #!/usr/bin/perl -w
 #
 # Input is VCF of gstrip deletions
+#    There are TWO expected VCF formats: deletion and CNV pipeline output.
+#    Differences are related to expected fields.
+#
 # Output is one line per sample per variant:
 #
-#SAMPLE	ID	CHROM	START	END	GT	GQ
+#SAMPLE	ID	CHROM	START	END	GT	GQ	READCOUNT
 #09C90050	DEL_P0556_6	20	348403	351100	1	99
 #10C103396	DEL_P0556_6	20	348403	351100	1	99
 #09C92633	DEL_P0556_7	20	433638	434759	1	21
@@ -11,7 +14,7 @@
 # An optional sites file (-s) is just used to confine the output to minimum and maximum regions on chromosomes.
 # Filter out regions below threshold length (-l)
 # Filter out regions below CNQ (-q) - applies to CNV-style input only
-# Write results to separate files in directory (-d) for each sample and genotype.
+# Write results to separate files in directory (-d) for each sample and genotype. (Probably obsolete.)
 #
 # Usage: gs_del2tab -s site.txt -l 1200 -q 13 -d dir < VCF 
 
