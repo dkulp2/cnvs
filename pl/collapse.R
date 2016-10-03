@@ -64,8 +64,9 @@ overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
   
 }
 
-cn.segs.merged <- as.tbl(mutate(ddply(csm, .(cn, chr), overlap), seg=substr(seg,1,100), copy.number=addNA(as.factor(cn))))
+cn.segs.merged <- as.tbl(mutate(ddply(csm, .(cn, chr), overlap), copy.number=addNA(as.factor(cn))))
 cn.segs.merged$.id <- 'All'
+save(cn.segs.merged, file=sprintf("%s.smlxcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.flt.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
 
