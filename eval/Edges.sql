@@ -1,3 +1,5 @@
+????
+
 DROP TABLE IF EXISTS breakpoints_1kg;
 CREATE TABLE breakpoints_1kg (
        CHROM varchar(2),
