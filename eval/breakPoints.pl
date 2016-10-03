@@ -1,5 +1,9 @@
 #!/usr/bin/env perl
 #
+# breakPoints - given a set of prediction (gs_dels.txt), generate
+#   metrics for K windows upstream and downstream of CN and CNQ from profileGenotyper or
+#   Observed/Expected ratio from raw profile data
+#
 # breakPoints.pl gs_dels.txt [-g windows.vcf.gz.txt | -p profile_seq_20_100.dat.gz ]
 #
 # where gs_dels.txt is the output from gs_del2tab
@@ -7,12 +11,18 @@
 #
 # If there's no windows.vcf.gz.txt.tbi, then create a tabix index.
 #
-# For each deletion, report the CNQ value for K windows upstream and
+# If -g: for each deletion, report the CNQ value for K windows upstream and
 # downstream of the left and right edges of the deletion.
 #
 # Output:
 #
-# DELETION SAMPLE L/R [-k,...,-1,1,...k] PRED_CN GENO_CN GENO_CNQ
+# DELETION SAMPLE L/R [-k,...,-1,1,...k] PRED_CN GENO_CN GENO_CNQ DEL_FREQ
+#
+# If -p: for each deletion, report the expected, observed 
+#
+# Output:
+#
+# DELETION SAMPLE L/R [-k,...,-1,1,...k] PRED_CN EXPECTED OBSERVED DEL_FREQ
 
 use strict;
 use FileHandle;
