@@ -1,4 +1,5 @@
-# staircase.R - modify a set of CNV predictions where a "staircase" model suggests a two state, not three state transition
+# staircase.R - modify a set of CNV predictions by removing small intermediate segments of a "staircase"
+#               then adjust the boundaries using an MLE strategy
 #
 # Author: David Kulp, dkulp@broadinstitute.org
 #
@@ -58,6 +59,29 @@ csm <- csm[-na.omit(candidates),]
 
 ###################################################################################################################
 
+# calculate the CI by growing greadily away from max. There are no NAs in p.
+conf.int <- function(p, conf=0.95) {
+  best.pos <- which.max(p)
+  i <- best.pos - 1
+  j <- best.pos + 1
+  mass <- p[best.pos]
+  while (mass < conf && j <= length(p) && i > 0) {
+    if (i > 0) {
+      if (j > length(p) || p[i] > p[j]) {
+        mass <- mass + p[i]
+        i <- i - 1
+      }
+    } 
+    if (j <= length(p) && mass < conf) {
+      if (i == 0 || p[j] > p[i]) {
+        mass <- mass + p[j]
+        j <- j + 1
+      }
+    }
+  }
+  return(list(left=i-best.pos+1, right=j-best.pos-1))
+}
+
 bin.map <- dbGetQuery(db$con, "select * from profile_segment")
 rownames(bin.map) <- bin.map$bin
 
@@ -77,7 +101,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   pois.cn <- llply(1:4, function(cn) {
     dpois(obs.cn, exp.cn[[cn]])
   })
-  
+
   ml.transition2 <- function(sample, pos1, pos2, cnA, cnB) {
     cnA <- ifelse(cnA > 3, 4, cnA+1)  # map CN to index into pois.cn. CN > 3 => CN:=3
     cnB <- ifelse(cnB > 3, 4, cnB+1)
@@ -90,19 +114,26 @@ csm.new <- ddply(csm, .(.id), function(df) {
     jp.norm <- jp / sum(jp)  # normalized
     best.pos <- bin.map[binL+which.max(jp.norm)+half.win-1,'start_pos']
     #  cat(sprintf("%s:%.0f => %.0f (%.0f) (%.4f..%.4f)\n", sample, pos, best.pos, best.pos-pos, min(-log(jp.norm)), max(-log(jp.norm))))
-    if (length(best.pos)>0) {
-      return(best.pos)
+    if (length(best.pos)>0) { # NAs if length is zero
+      CI <- conf.int(jp.norm)  # returns CI$left and CI$right, which are offsets of best.pos
+      return(data.frame(pos=best.pos, left.bound=best.pos+CI$left, right.bound=best.pos+CI$right))
     } else {
-      return(pos1 + (pos2-pos1)/2)  # all NA or NaN
+      return(data.frame(pos=pos1 + (pos2-pos1)/2, left.bound=NA, right.bound=NA))
     }
   }
   
-  # Iterate across every boundary (skipping small NAs), where the boundary between the first and second segment is idx=1, etc.
-  new.bounds <- sapply(1:(nrow(df)-1), function(idx) { 
+  # Iterate across every boundary, where the boundary between the first and second segment is idx=1, etc.
+  new.bounds <- ldply(1:(nrow(df)-1), function(idx) { 
     ml.transition2(sample, df$end.map[idx], df$start.map[idx+1], df$cn[idx], df$cn[idx+1]) 
   })
-  df$end.map <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds,NA))
-  df$start.map <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds))
+  df$end.map <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$pos,NA))
+  df$end.map.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$left.bound,NA))
+  df$end.map.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$right.bound,NA))
+  
+  df$start.map <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$pos))
+  df$start.map.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$left.bound))
+  df$start.map.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$right.bound))
+  
   return(df)
 })
 
