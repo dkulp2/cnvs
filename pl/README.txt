@@ -1,6 +1,9 @@
 Prediction:
 
-Set params in cnv_seg.sh and run
+Adjust configuration variables in ../conf/site.conf and ../conf/cnv.conf.
+
+Run cnv_seg.sh
+Output is in $workDir
 
 
 
