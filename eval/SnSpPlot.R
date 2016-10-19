@@ -58,8 +58,8 @@ snsp.comp <- function(comp.func, comp.func.name, intvls, with.lines=TRUE) {
                     quote(!is.na(k_geno) & k_geno %in% c('1','0') & known_len > 1200), intvls)
 
   x <- ret$res
-  x <- ddply(x, .(k_geno, overlap), mutate, rank=rank(-frac))
-  print(ggplot(filter(x, overlap==0.5), aes(x=rank, y=frac, color=k_geno)) + geom_line() + geom_point() + ylab("Sn") + ggtitle("Ranked SampleSeg Sensitivity"))
+  x <- ddply(x, .(k_geno, overlap), mutate, rank=rank(-frac, ties.method="first"))
+  print(ggplot(filter(x, overlap==0.5), aes(x=rank, y=frac, color=k_geno)) + geom_line() + geom_point() + facet_grid(~k_geno, scales="free_x") + ylab("Sn") + xlab("Rank of Known Sites") + ggtitle("Ranked SampleSeg Sensitivity\n(at 50% overlap)"))
 
   x2 <- ldply(c(0.0001,0.1,0.25,0.5,0.75,0.9,1), function(sample.frac) {
     ddply(x, .(k_geno, overlap), summarize, sample.frac, successes=sum(success/total>=sample.frac), sites=length(success), frac=successes/sites)
@@ -92,13 +92,13 @@ snsp.comp <- function(comp.func, comp.func.name, intvls, with.lines=TRUE) {
                   'Fraction of predicted SampleSeg overlapped by known', 'Sp', with.lines))
 
   x <- ret$res
-  x <- ddply(x, .(p_geno, overlap), mutate, rank=rank(-frac))
-  print(ggplot(filter(x, overlap==0.5), aes(x=rank, y=frac, color=p_geno)) + geom_line() + geom_point() + ylab("Sp") + ggtitle("Ranked SampleSeg Specificity"))
+  x <- ddply(x, .(p_geno, overlap), mutate, rank=rank(-frac, ties.method = 'first'))
+  print(ggplot(filter(x, overlap==0.5), aes(x=rank, y=frac, color=p_geno)) + geom_line() + geom_point() + facet_grid(~p_geno, scales="free_x") + ylab("Sp") + xlab("Rank of Predicted Sites") + ggtitle("Ranked SampleSeg Specificity\n(at 50% overlap)"))
   
 }
 
 snsp.comp(greater.or.equal,'or Greater', thresh.intvls[2:length(thresh.intvls)])
-snsp.comp(less.or.equal,'or Lesser', thresh.intvls[1:(length(thresh.intvls)-1)])
+#snsp.comp(less.or.equal,'or Lesser', thresh.intvls[1:(length(thresh.intvls)-1)])
 #snsp.comp(intvl.bin, 'Bin', thresh.intvls[2:(length(thresh.intvls)-2)], with.lines=FALSE)
 
 
@@ -132,7 +132,19 @@ geom_hline(aes(yintercept=sp), base.sp) + geom_label(aes(label=sprintf("%.0f%%",
 
 # Edge stats - only for knowns that overlap predictions
 ovlp3 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEG' && p_kind=='SAMPLESEG') %>% collect
-ggplot(ovlp3, aes(x=start_offset, y=end_offset,color=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Conserved GStrip Deletions") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-1000,1000) + ylim(-1000,1000) + geom_density_2d(color='gray40') + guides(size=FALSE)
+ggplot(ovlp3, aes(x=start_offset, y=end_offset,color=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Conserved GStrip Deletions") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-1000,1000) + ylim(-1000,1000) + geom_density_2d(color='gray40') + guides(color=FALSE)
+
+# What fraction of knowns are within the 95% confidence interval?
+cil <-
+ldply(c(0.1, 0.25, 0.5, 0.75, 0.9), function(ov) {
+  k.ss <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEG' & as.numeric(overlap_len) / known_len > ov)
+  mutate(na.omit(ddply(collect(k.ss), .(start_in_cil, end_in_cil), summarize, in_cil=length(k_sample))), in_cil_frac=in_cil/sum(in_cil), overlap=ov)
+  
+})
+cil$label <- with(cil, ifelse(start_in_cil, ifelse(end_in_cil, 'both', 'left only'), ifelse(end_in_cil, 'right only', 'neither')))
+ggplot(cil, aes(x=overlap, y=in_cil_frac, color=label)) + geom_line() + ylab('Fraction of known DELs') + xlab("Minimum overlap")
+print(cil)
+
 
 #ovlp4 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEGSP' && p_kind=='SAMPLESEGSP') %>% collect
 #ggplot(ovlp4, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Any GStrip CNV") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-10000,10000) + ylim(-10000,10000) # + geom_density_2d()
