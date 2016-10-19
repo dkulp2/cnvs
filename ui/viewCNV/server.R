@@ -39,7 +39,7 @@ pad <- 5000  # add pad bases to L and R of target region
 too.big <- 500000  # don't retrieve big data when window is larger than too.big
 
 # common colors for copy number
-cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#beaed4", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999"), 
+cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#c51b7d", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999"), 
                                 name="CN")
 
 frags.cmd <- sprintf("%s 'zcat %s | head -1'", shell, profile.fn)
