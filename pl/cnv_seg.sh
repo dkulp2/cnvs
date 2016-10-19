@@ -1,47 +1,37 @@
 #!/bin/bash -eu
 #
-# Run first pass genotyping on rolling windows.
-# Create CNV segments
-# Run second pass genotyping on CNV segments and GStrip DELs - which generates VCF of predicted genotypes per sample for IRS.
-# Run IRS on 2nd pass genotype VCF
+# First pass: profileGenotype on fixed width rolling windows.
+# CNV Calls: Run merge_cnv.R and staircase.R to generate predictions
+# Second pass: genotype on CNV segments and GStrip DELs - which generates VCF of predicted genotypes per sample, which can be used for IRS.
+# IRS evaluation: Determine the quality of the deletion based on probe data for CNV segments per sample
 
 set -eux
 
-ROOT=/cygdrive/d/mccarroll/
+THISDIR=`dirname $0`
+export PATH=${THISDIR}/../util:$PATH
+echo $PATH
 
-# External input data
-# profileFile=${ROOT}/profiles/profile_seq_20_100.dat.gz
-# arrayFile=${ROOT}/arrays/intensities.chr20.dat
-profileFile=${ROOT}/gpc_wave2_batch1/profile_seq_20_100.dat.gz
-arrayFile=${ROOT}/gpc_wave2_batch1/irs_matrix_OMNI25.dat
-gsdelFile=${ROOT}/gpc_wave2_batch1/gs_dels.genotypes.vcf.gz
-referenceFile=${ROOT}/references/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta
+# set ROOT and primary data sources
+source ${THISDIR}/../conf/site.conf
 
-SAMPLE_COUNT=	      # number of samples or blank for all samples
-SITE_COUNT=	      # number of rows from profile or blank for all data in profile
-BIN_SIZE=100	      # number of bases in each bin in profile
-NBINS=12	      # number of bins to combine into a single region
-#NBINS2=8	      # number of bins for higher resolution "break point"
-#MAXLEN=10000000  # effectively unlimited     # max length of resulting window. Is typically BIN_SIZE*NBIN = .e.g. 1000, but profile may have gaps or larger bins 
-MAXLEN=2400     # max length of resulting window. Is typically BIN_SIZE*NBIN = .e.g. 1000, but profile may have gaps or larger bins 
-CNV_CALL_THRESH=0.80  # fraction of samples required to use call from org.broadinstitute.sv.apps.ProfileGenotyper
-CNQ_THRESH=13	      # phred-style threshold for org.broadinstitute.sv.apps.ProfileGenotyper (Q=20 => 1/10^(Q/10) => 99% confidence)
-SPAN_THRESH=500      # max number of bases to span across if flanking segments are the same genotype
-
-workDir=${ROOT}/cnv_seg.B${NBINS}.L${SPAN_THRESH}.Q${CNQ_THRESH}.4
-
+# set params for this run
+source ${THISDIR}/../conf/cnv.conf
 
 # Java stuff
 export WSP_DIR=${ROOT}/SVToolkit_Kulp
-export SV_DIR=`cygpath -w ${WSP_DIR}/release/svtoolkit`  # passed to GATK
+export SV_DIR=`cygpath.shim -w ${WSP_DIR}/release/svtoolkit`  # passed to GATK
 export SV_CLASSPATH=${WSP_DIR}/dist/SVToolkit-private.jar:${WSP_DIR}/public/dist/SVToolkit.jar:${WSP_DIR}/public/release/svtoolkit/lib/gatk/GenomeAnalysisTK.jar
 
 # auxiliary scripts
-SCRIPTS=${ROOT}/scripts
+SCRIPTS=${THISDIR}
+UTILS=${THISDIR}/../util
 ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
-VCF2TAB=${SCRIPTS}/vcf2tab
-MERGE_CNV=${SCRIPTS}/merge_cnv2.R
-GSDEL2TAB=${SCRIPTS}/gs_del2tab
+VCF2TAB=${UTILS}/vcf2tab
+GSDEL2TAB=${UTILS}/gs_del2tab
+MERGE_CNV=${SCRIPTS}/merge_cnv.R
+STAIRCASE=${SCRIPTS}/staircase.R
+COLLAPSE=${SCRIPTS}/collapse.R
+
 
 # input and output files
 SAMPLES=${workDir}/samples${SAMPLE_COUNT}.list
@@ -81,38 +71,47 @@ else
     SITE_HEAD=""
 fi
 
-# # generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
-# eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
-# #eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS2} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES_HIRES}
+# generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
+eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
+#eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS2} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES_HIRES}
 
-# # generate first pass genotypes of rolling windows
-# time java -cp `cygpath -wp ${SV_CLASSPATH}` -Xmx4g \
-#     org.broadinstitute.sv.apps.ProfileGenotyper \
-#     -configFile `cygpath -w ${SV_DIR}/conf/genstrip_parameters.txt` \
-#     -R `cygpath -w ${referenceFile}` \
-#     -profile `cygpath -w ${profileFile}` \
-#     -ploidyMapFile `cygpath -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
-#     -segmentFile `cygpath -w ${SITES}` \
-#     -sample `cygpath -w ${SAMPLES}` \
-#     -O `cygpath -w ${OUT1_VCF}` 
+# generate first pass genotypes of rolling windows
+time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
+    org.broadinstitute.sv.apps.ProfileGenotyper \
+    -configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
+    -R `cygpath.shim -w ${referenceFile}` \
+    -profile `cygpath.shim -w ${profileFile}` \
+    -ploidyMapFile `cygpath.shim -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
+    -segmentFile `cygpath.shim -w ${SITES}` \
+    -sample `cygpath.shim -w ${SAMPLES}` \
+    -O `cygpath.shim -w ${OUT1_VCF}` 
 
 # # # run a second time with smaller windows
-# # time java -cp `cygpath -wp ${SV_CLASSPATH}` -Xmx4g \
+# # time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
 # #     org.broadinstitute.sv.apps.ProfileGenotyper \
-# #     -configFile `cygpath -w ${SV_DIR}/conf/genstrip_parameters.txt` \
-# #     -R `cygpath -w ${referenceFile}` \
-# #     -profile `cygpath -w ${profileFile}` \
-# #     -segmentFile `cygpath -w ${SITES_HIRES}` \
-# #     -sample `cygpath -w ${SAMPLES}` \
-# #     -O `cygpath -w ${OUT1_VCF_HIRES}` 
+# #     -configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
+# #     -R `cygpath.shim -w ${referenceFile}` \
+# #     -profile `cygpath.shim -w ${profileFile}` \
+# #     -segmentFile `cygpath.shim -w ${SITES_HIRES}` \
+# #     -sample `cygpath.shim -w ${SAMPLES}` \
+# #     -O `cygpath.shim -w ${OUT1_VCF_HIRES}` 
 
 # # convert VCF to a simpler delimited file
-# zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
+zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
 # #zcat ${OUT1_VCF_HIRES} | ${VCF2TAB} > ${OUT1_VCF_HIRES}.txt
 
-# merge windows with adjacent common CN, etc.
-# write site file
+# basic CNV prediction
 time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
+
+# filter and adjust
+time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} 1>&2
+
+# generate a collapse "site" set
+time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm ${BP_DIST}
+
+# infer a distribution for each site of bounds
+#time Rscript ${BOUNDS} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm ${DBCONN}
+
 #time Rscript ${MERGE_CNV} ${OUT1_VCF_HIRES}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE2} 1>&2
 
 # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
@@ -135,27 +134,27 @@ cat ${GS_DEL_SITES_FILE} ${CNV_SEG_SITES_FILE} | sort -n -k3,4 > ${IN2_SITES}
 exit 0
 
 # rerun org.broadinstitute.sv.apps.ProfileGenotyper on new CNV segment file
-time java -cp `cygpath -wp ${SV_CLASSPATH}` -Xmx4g \
+time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
     org.broadinstitute.sv.apps.ProfileGenotyper \
-    -configFile `cygpath -w ${SV_DIR}/conf/genstrip_parameters.txt` \
-    -R `cygpath -w ${referenceFile}` \
-    -profile `cygpath -w ${profileFile}` \
-    -segmentFile `cygpath -w ${IN2_SITES}` \
-    -sample `cygpath -w ${SAMPLES}` \
-    -O `cygpath -w ${OUT2_VCF}` 
+    -configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
+    -R `cygpath.shim -w ${referenceFile}` \
+    -profile `cygpath.shim -w ${profileFile}` \
+    -segmentFile `cygpath.shim -w ${IN2_SITES}` \
+    -sample `cygpath.shim -w ${SAMPLES}` \
+    -O `cygpath.shim -w ${OUT2_VCF}` 
 
 
 #
 (for i in `cut -f2 ${SITES} | uniq`; do egrep "^[[:alnum:]]+[[:space:]]${i}[[:space:]]" ${arrayFile} | cut -f1-4; done) > ${workDir}/probes.txt
 
 # run IRS on the output from these segments
-time java -Xmx4g -cp `cygpath -wp ${SV_CLASSPATH}` \
+time java -Xmx4g -cp `cygpath.shim -wp ${SV_CLASSPATH}` \
      org.broadinstitute.sv.main.SVAnnotator \
      -A IntensityRankSum \
-     -R `cygpath -w ${referenceFile}` \
-     -vcf `cygpath -w ${OUT2_VCF}` \
-     -O `cygpath -w ${IRS_VCF}` \
-     -arrayIntensityFile `cygpath -w ${arrayFile}` \
+     -R `cygpath.shim -w ${referenceFile}` \
+     -vcf `cygpath.shim -w ${OUT2_VCF}` \
+     -O `cygpath.shim -w ${IRS_VCF}` \
+     -arrayIntensityFile `cygpath.shim -w ${arrayFile}` \
      -irsUseGenotypes true \
      -writeReport true \
-     -reportFile `cygpath -w ${IRS_REPORT}` 
+     -reportFile `cygpath.shim -w ${IRS_REPORT}` 
