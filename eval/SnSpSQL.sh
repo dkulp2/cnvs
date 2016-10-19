@@ -1,6 +1,18 @@
 #!/bin/bash
 
-psql <<EOF
+set -eux
+
+THISDIR=`dirname $0`
+export PATH=${THISDIR}/../util:$PATH
+echo $PATH
+
+# set ROOT and primary data sources
+source ${THISDIR}/../conf/site.conf
+
+# set params for this run
+source ${THISDIR}/../conf/cnv.conf
+
+psql -a <<EOF
 DROP TABLE IF EXISTS KNOWN_CNVS;
 CREATE TABLE IF NOT EXISTS KNOWN_CNVS (
        SAMPLE	     varchar(30),
@@ -20,10 +32,14 @@ ALTER TABLE ALL_KNOWN_CNVS ADD COLUMN KIND VARCHAR(20);
 DROP TABLE IF EXISTS PRED_CNVS;
 CREATE TABLE IF NOT EXISTS PRED_CNVS (
        SAMPLE	     varchar(30),
-       ID varchar(10000),
+       ID varchar(100000),
        CHROM varchar(2),
+       START_CIL integer,
        START_POS integer,
+       START_CIR integer,
+       END_CIL integer,
        END_POS integer,
+       END_CIR integer,
        GENO varchar(3)
 );
 DROP TABLE IF EXISTS ALL_PRED_CNVS;
@@ -31,15 +47,16 @@ CREATE TABLE ALL_PRED_CNVS (LIKE PRED_CNVS);
 ALTER TABLE ALL_PRED_CNVS ADD COLUMN SOURCE VARCHAR(20);
 ALTER TABLE ALL_PRED_CNVS ADD COLUMN KIND VARCHAR(20);
 
--- ".sml" are basic predictions, extended by "staircase" and MLE 
+
+-- ".smlCI" are basic predictions, extended by "staircase" and MLE, with confidence intervals
 DELETE FROM PRED_CNVS;
-\COPY PRED_CNVS FROM '/cygdrive/d/mccarroll/cnv_seg.B12.L500.Q13/sites_cnv_segs.txt.sml.tbl' DELIMITER E'\t' CSV;
+\COPY PRED_CNVS FROM '${workDir}/sites_cnv_segs.txt.smlCI.tbl' DELIMITER E'\t' CSV NULL 'NA';
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SAMPLESEG' FROM PRED_CNVS;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SAMPLESEGSP' FROM PRED_CNVS;
 
 -- ".flt" is a flattened ".sml" for site-level analysis
 DELETE FROM PRED_CNVS;
-\COPY PRED_CNVS FROM '/cygdrive/d/mccarroll/cnv_seg.B12.L500.Q13/sites_cnv_segs.txt.flt.tbl' DELIMITER E'\t' CSV;
+\COPY PRED_CNVS FROM '${workDir}/sites_cnv_segs.txt.flt.tbl' DELIMITER E'\t' CSV;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SITE' FROM PRED_CNVS;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SITESP' FROM PRED_CNVS;
 
@@ -90,7 +107,9 @@ SELECT k.SAMPLE AS k_SAMPLE, k.SOURCE as k_SOURCE, p.SAMPLE AS p_SAMPLE, p.SOURC
        k.END_POS - k.START_POS AS KNOWN_LEN,
        p.END_POS - p.START_POS AS PRED_LEN,
        p.START_POS - k.START_POS AS START_OFFSET,
-       p.END_POS - k.END_POS AS END_OFFSET
+       p.END_POS - k.END_POS AS END_OFFSET,
+       k.START_POS BETWEEN p.START_CIL AND p.START_CIR AS START_IN_CIL,
+       k.END_POS BETWEEN p.END_CIL AND p.END_CIR AS END_IN_CIL
   INTO OVERLAP
   FROM ALL_KNOWN_CNVS k FULL OUTER JOIN (SELECT * FROM ALL_PRED_CNVS WHERE START_POS < END_POS) AS p ON 
        (k.SAMPLE = p.SAMPLE AND
