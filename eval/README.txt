@@ -1,9 +1,7 @@
-After running a prediction set:
+After running a prediction set (param settings in cnv.conf and site.conf):
 
-- Edit SnSpSQL.sh to choose which input files to use.
 - Execute SnSpSQL.sh, which reloads ALL data - known and predicted.
 - Run SnSpPlot.R to generate Sn, Sp and edge plots
-
 
 One time analysis:
 
