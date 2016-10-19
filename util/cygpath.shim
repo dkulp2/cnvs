@@ -1,0 +1,12 @@
+#!/bin/sh
+#
+# cygpath.shim is a shim for Unix and Windows compatibility
+# Under unix it is a null op, ignoring switches and just returning the file argument.
+# Under windows it calls the actual cygpath.
+
+if [[ `uname` =~ CYGWIN ]]; then
+    cygpath $@
+else
+    while [[ $1 =~ -.* ]]; do shift; done
+    echo $@
+fi
