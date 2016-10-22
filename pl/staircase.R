@@ -143,11 +143,13 @@ csm.new <- ddply(csm, .(.id), function(df) {
 #    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
     if (length(best.jp.bin)>0) { # NAs if length is zero
       best.bin <- binL+(best.jp.bin-1)+half.win # first bin passed the transition
-      best.pos <- bin.map[best.bin,'start_pos'] + round((bin.map[best.bin,'end_pos'] - bin.map[best.bin,'start_pos'])/2)  # mid-point in best bin
+      best.pos <- bin.map[best.bin,'start_pos'] # left side of bin is the transition point between bins
       CI <- conf.int(jp.norm)  # returns CI$left and CI$right, which are bin offsets of best.pos
       binCI.L <- best.bin + CI$left
       binCI.R <- best.bin + CI$right
-      left.bound <- bin.map[binCI.L,'start_pos']
+      
+      # bounds are generous, including the furthest base from the best.pos in the transition bins.
+      left.bound <- bin.map[binCI.L-1,'start_pos']
       right.bound <- bin.map[binCI.R,'end_pos']
       
       return(data.frame(pos=best.pos, left.bound=left.bound, right.bound=right.bound, win.size=posR-posL+1, left.tail=jp.norm[1], right.tail=jp.norm[length(jp.norm)], binL=binL, binR=binR, best.bin=best.bin, binCI.L=binCI.L, binCI.R=binCI.R))
