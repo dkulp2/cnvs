@@ -141,10 +141,14 @@ ldply(c(0.1, 0.25, 0.5, 0.75, 0.9), function(ov) {
   mutate(na.omit(ddply(collect(k.ss), .(start_in_cil, end_in_cil), summarize, in_cil=length(k_sample))), in_cil_frac=in_cil/sum(in_cil), overlap=ov)
   
 })
-cil$label <- with(cil, ifelse(start_in_cil, ifelse(end_in_cil, 'both', 'left only'), ifelse(end_in_cil, 'right only', 'neither')))
-ggplot(cil, aes(x=overlap, y=in_cil_frac, color=label)) + geom_line() + ylab('Fraction of known DELs') + xlab("Minimum overlap")
+cil$inCI <- with(cil, ifelse(start_in_cil, ifelse(end_in_cil, 'Both', 'Only Start'), ifelse(end_in_cil, 'Only End', 'Neither')))
+ggplot(cil, aes(x=overlap, y=in_cil_frac, color=inCI)) + geom_line() + ylab('Fraction of known DELs') + xlab("Minimum overlap")
 print(cil)
 
+k.ss <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEG' & as.numeric(overlap_len) / known_len > 0.75) %>% collect
+k.ss$inCI <- with(k.ss, ifelse(start_in_cil, ifelse(end_in_cil, 'Both', 'Only Start'), ifelse(end_in_cil, 'Only End', 'Neither')))
+ggplot(na.omit(k.ss), aes(x=start_offset, y=end_offset, color=inCI)) + geom_point() + facet_wrap(~inCI) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets and Confidence Intervals\nfor predictions with 75% overlap to knowns') + lims(x=c(-1000,1000),y=c(-1000,1000)) + geom_hline(yintercept=0) + geom_vline(xintercept = 0)
+ggplot(filter(na.omit(k.ss),inCI!='Both'), aes(y=-start_offset, x=-end_offset, color=inCI)) + geom_point() + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets and Confidence Intervals\nfor predictions with 75% overlap to knowns') + lims(x=c(-1000,1000),y=c(-1000,1000)) + geom_hline(yintercept=0) + geom_vline(xintercept = 0)
 
 #ovlp4 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEGSP' && p_kind=='SAMPLESEGSP') %>% collect
 #ggplot(ovlp4, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Any GStrip CNV") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-10000,10000) + ylim(-10000,10000) # + geom_density_2d()
