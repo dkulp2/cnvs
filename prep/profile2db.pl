@@ -48,6 +48,8 @@ while (<$profileFh>) {
     my ($bin, $chr, $start, $end, $elength, $gcratio, @cols) = split;
     my ($gc, $gctotal) = split(/,/,$gcratio);
     
+    $bin =~ s/^B//;
+    
     $outsegFh->print("$bin\t$chr\t$start\t$end\t$elength\t$gc\t$gctotal\n");
     foreach my $i (0..$#cols) {
 	my ($obs,$exp) = split(/,/,$cols[$i]);
