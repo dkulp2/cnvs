@@ -7,8 +7,14 @@ library(foreach)
 library(zoo)
 library(gridExtra)
 library(tidyr)
+library(RPostgreSQL)
+library(reshape2)
 
 source("config.R")
+
+db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
+names(db.conn.params) <- c('user','host','port','dbname')
+db <- do.call(src_postgres, db.conn.params)
 
 # input <-
 #   structure(list(candidate = "DEL_P0563_29", seg.chr = 20L, seg.end = 36477348L, 
@@ -20,9 +26,9 @@ probe.fn <- paste0(data.dir,"/probes.txt")
 
 # KNOWNS
 #gs_dels.fn <- paste0(data.dir,"/gs_dels.txt")
-gs_dels.fn <- paste0(data.dir,"/../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
+gs_dels.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
 # NOT USED: gs_cnvs.fn <- paste0(data.dir,"../gpc_wave2/gs_cnv.genotypes.txt")
-gs_cnvdels_flat.fn <- paste0(data.dir,"/../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
+gs_cnvdels_flat.fn <- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
 
 cnv.geno.fn <- paste0(data.dir,"/sites_cnv_segs.txt.cnvgeno.srt.gz")
 cnv.hires.geno.fn <- paste0(data.dir,"/hires_sites_cnv_segs.txt.cnvgeno.srt.gz")
@@ -127,9 +133,6 @@ shinyServer(function(input, output, session) {
     input$reset
     input$saved.site
     isolate({
-      # save the latest selected site for interactive debug
-      input.dump <- reactiveValuesToList(input)
-      dump('input.dump',file=input.dump.fn)
       
       if (input$saved.site != "") {
         note <- notes[notes$name == input$saved.site,]
@@ -161,6 +164,7 @@ shinyServer(function(input, output, session) {
   
   # if the predicted site changes, then set the samples, chromosome, start and end positions
   observe({
+    
     if (input$predicted != "") {
       gs.row <- cn.segs.merged[cn.segs.merged$seg == input$predicted & !is.na(cn.segs.merged$cn),]
       cat(sprintf("Found %s rows for prediction %s\n", nrow(gs.row), input$predicted))
@@ -196,6 +200,7 @@ shinyServer(function(input, output, session) {
   
   # if the candidate site changes, then set the samples, chromosome, start and end positions
   observe({
+
     if (input$candidate != "") {
       isolate(gdo <- gs.dels.orig())
       gs.row <- gdo[gdo$seg == input$candidate,]
@@ -226,6 +231,15 @@ shinyServer(function(input, output, session) {
     if (length(idx)>0 && idx < length(candidates)) { updateSelectInput(session,'candidate',selected=candidates[idx+1]) }
   })
   
+  # save input data structure to disk.
+  # reload with:
+  #   source(input.dump.fn); input <- input.dump
+  observe({
+    input$dump
+    # save the latest selected site for interactive debug
+    isolate({cat("Dump\n"); input.dump <- reactiveValuesToList(input); dump('input.dump',file=input.dump.fn)})
+  })
+
   # zoom out 1.5x
   observe({
     input$zoom.out
@@ -295,15 +309,6 @@ shinyServer(function(input, output, session) {
       csm.all <- rbind(csm.all, cn.segs.merged)
     }
     
-    if (input$show_extended_cnvs) {
-      cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.ncsm.Rdata")
-      load(cn.segs.merged.fn)
-      cn.segs.merged <- select(cn.segs.merged, .id, cn, chr, start.map, end.map, copy.number, len, seg)
-      cn.segs.merged$label <- sprintf("%s_%s", cn.segs.merged$seg, cn.segs.merged$.id)
-      cn.segs.merged$evidence <- 'Ext#1'
-      cat(sprintf("Loaded %s CNVs from %s\n",nrow(cn.segs.merged), cn.segs.merged.fn))
-      csm.all <- rbind(csm.all, cn.segs.merged)
-    }
     if (input$show_extended_ML) {
       cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.smlcsm.Rdata")
       load(cn.segs.merged.fn)
@@ -316,6 +321,7 @@ shinyServer(function(input, output, session) {
     
     return(csm.all)
   })
+  
   
   # a subset of the extents
   cn.segs <- reactive({
@@ -418,6 +424,36 @@ shinyServer(function(input, output, session) {
     return(frags)
   })
   
+  # breakpoint log likelihoods
+  bkpts.ll <- reactive({
+    if (input$seg.end-input$seg.start > too.big) {
+      cat(sprintf("Skipping profile - region too big %s > %s", input$seg.end-input$seg.start, too.big))
+      bkpts <- data.frame(sample=character(0), start_pos=integer(0), end_pos=integer(0), bkpt_ll=numeric(0), no_bkpt_ll=numeric(0))
+    } else {
+      # query each sample separately
+      bkpts <-
+        ldply(input$seg.sample, function(sample) {
+          cat(sample,"\n")
+          dbGetQuery(db$con, sprintf("SELECT b.sample, ps.start_pos, ps.end_pos, loss_ll, gain_ll, any_ll, no_bkpt_ll FROM bkpt b, profile_segment ps WHERE b.sample='%s' AND ps.chrom='%s' AND ps.start_pos < %s AND ps.end_pos > %s AND b.chr = ps.chrom AND b.bkpt_bin = ps.bin", 
+                                     sample, input$seg.chr, input$seg.end+input$pad, input$seg.start-input$pad))
+      })
+      
+      # # db values are p(x|gain,loss,nc). Turn into p(gain,loss,nc|x) = p(x|gain,loss,nc)p(gain,loss,nc) and normalize
+      # # p(gain) = p(loss) = 6/16. p(nc) = 4/16. Assuming 4 levels of CN from staircase.R.
+      # bkpts <- mutate(mutate(bkpts, loss = 6/16. * 10^-loss_ll, gain= 6/16. * 10^-gain_ll, any=12/16.*10^-any_ll,
+      #                        no_bkpt = 4/16. * 10^-no_bkpt_ll,
+      #                        tot=loss+gain+no_bkpt),
+      #                 loss=loss/tot, gain=gain/tot, any=any/tot, no_bkpt=no_bkpt/tot,
+      #                 Lloss=-log10(loss), Lgain=-log10(gain), Lany=-log10(any), Lno_bkpt=-log10(no_bkpt),
+      #                 Lno_loss=-log10(gain+no_bkpt), Lno_gain=-log10(loss+no_bkpt))
+      
+      bkpts <- mutate(bkpts,
+                      loss=10^-loss_ll, gain=10^-gain_ll, any=10^-any_ll, no_bkpt=10^-no_bkpt_ll)
+    }
+    save(bkpts,file=sprintf('%s/bkpts.Rdata',tmp.dir))
+    return(bkpts)
+  })
+  
   # returns a data.frame for plotting that is a row per sample and expected counts
   expected <- reactive({
     frags <- frags()
@@ -479,6 +515,12 @@ shinyServer(function(input, output, session) {
     cat(sprintf("xmin=%s xmax=%s\n",xmin,xmax))
     coord_cartesian(xlim=c(xmin,xmax))
   })
+  ylims <- reactive({
+    ylim(min(oer()$start.map), max(oer()$start.map))
+  })
+  flip.bounds <- function(coord) {
+    coord_cartesian(xlim=coord$limits$y, ylim=coord$limits$x)
+  }
   
   cnvPlot <- reactive({
     cat("cnvPlot...\n")
@@ -499,7 +541,27 @@ shinyServer(function(input, output, session) {
     if (nrow(subset(cnv.disp,evidence=='Array'))>0) {
       plt <- plt + geom_point(data=subset(cnv.disp, evidence=='Array'), size=5, color='black')
     }
-    return(plt + geom_segment() + facet_grid(evidence ~ ., scales="free", space="free") + guides(size="none") + theme(axis.title.x = element_blank()) + xbounds())
+    return(plt + geom_segment() + facet_grid(evidence ~ ., scales="free", space="free") + guides(size="none") + theme(axis.title.x = element_blank(), axis.title.y=element_blank()) + xbounds())
+  })
+  
+  cnvCIPlot <- reactive({
+    cat("cnvCIPlot...\n")  
+    cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.smlcsm.Rdata")
+    load(cn.segs.merged.fn)
+    x <- filter(cn.segs.merged, 
+                chr == input$seg.chr & 
+                  end.map > input$seg.start-input$pad & 
+                  start.map < input$seg.end+input$pad & 
+                  (cn != 2 | input$show_wildtype) & 
+                  len > input$min.cnv.len & 
+                  !is.na(cn))
+    if (input$show_target_only) { x <- filter(x, .id %in% input$seg.sample) }
+    x$target <- x$.id %in% input$seg.sample
+    print(x)
+    ggplot(x, aes(x=.id, y=start.map, ymin=start.map.L, ymax=start.map.R, color=target))+geom_pointrange(size=1.5) + 
+      geom_pointrange(aes(y=end.map, ymin=end.map.L, ymax=end.map.R), size=1.5) +
+      geom_segment(aes(y=start.map, yend=end.map, xend=.id), size=1.5, linetype=3) +
+      theme(axis.title.x = element_blank(), axis.title.y=element_blank(), plot.margin=unit(c(0,1,0,0),'inches')) + guides(color='none') + ylims() + coord_flip()
   })
   
   winGenoPlot <- reactive({
@@ -534,6 +596,104 @@ shinyServer(function(input, output, session) {
       xbounds()
   })
   
+  bkptPriors <- reactive({
+    if (input$seg.end-input$seg.start > too.big) {
+      cat(sprintf("Skipping profile - region too big %s > %s", input$seg.end-input$seg.start, too.big))
+      return(data.frame())
+    } else {
+      bkpts <- dbGetQuery(db$con, sprintf("SELECT b.sample, ps.start_pos, ps.end_pos, loss_ll, gain_ll, no_bkpt_ll FROM bkpt b, profile_segment ps WHERE ps.chrom ='%s' AND ps.start_pos < %s AND ps.start_pos > %s AND b.bkpt_bin = ps.bin", 
+                                          input$seg.chr, input$seg.end+input$pad, input$seg.start-input$pad))
+      
+      if (input$bkpt_prior_samples == 'Selected') {
+        bkpts <- filter(bkpts, sample %in% input$seg.sample)
+      } else if (input$bkpt_prior_samples == 'Exclude Selected') {
+        bkpts <- filter(bkpts, ! sample %in% input$seg.sample)
+      }
+      
+      if (input$bkpt_prior_CN != 'Any') {
+        if (input$bkpt_prior_CN == '0 or 1') {
+          CN.match = c(0,1)
+        } else {
+          CN.match = as.integer(input$bkpt_prior_CN)
+        }
+        
+        gdo <- read.table(gs_dels.fn, header=TRUE, sep="\t", stringsAsFactors = FALSE)
+        colnames(gdo) <- c('.id','seg','chr','start.map','end.map','cn','cq','paired.reads')
+        x <- subset(gdo, chr==input$seg.chr & end.map > input$seg.start-input$pad & start.map < input$seg.end+input$pad & cn %in% CN.match)
+        bkpts <- filter(bkpts, sample %in% x$.id)
+      }
+      
+      cat(sprintf("bkpts: %s rows\n",nrow(bkpts)))
+      cat(sprintf("samples: %s\n",length(unique(bkpts$sample))))
+      
+      # first normalize, then compute NOT probs
+      bkpts <- mutate(bkpts,
+                      loss = 10^-loss_ll*6./16,
+                      gain = 10^-gain_ll*6./16,
+                      nc = 10^-no_bkpt_ll*4./16,
+                      tot=loss+gain+nc,
+                      lossZ = loss/tot,
+                      gainZ = gain/tot,
+                      ncZ = nc/tot,
+                      Lloss = -log10(lossZ),
+                      Lgain = -log10(gainZ),
+                      Lnc = -log10(ncZ),
+                      Lno_loss=-log10(1-lossZ),
+                      Lno_gain=-log10(1-gainZ)
+      )
+      
+      # Don't normalize.
+      bkpts <- mutate(bkpts,
+                      no_loss_ll=-log10(1-10^-loss_ll),  # <—- This is just wrong, but normalizing, above, doesn't seem to work. P(x|loss)
+                      no_gain_ll=-log10(1-10^-gain_ll)
+      )
+      
+      bkpt.prior <- mutate(ddply(bkpts, .(start_pos), summarize,
+                                 max_gain=max(gainZ),
+                                 max_loss=max(lossZ),
+                                 Lall_no_loss=sum(Lno_loss),
+                                 Lall_no_gain=sum(Lno_gain),
+                                 Lall_nc=sum(Lnc),
+                                 all_no_loss_ll=sum(no_loss_ll), 
+                                 all_no_gain_ll=sum(no_gain_ll),
+                                 some_loss=1-10^(-Lall_no_loss), 
+                                 some_gain=1-10^(-Lall_no_gain),
+                                 Lsome_loss=-log10(some_loss), 
+                                 Lsome_gain=-log10(some_gain),
+                                 Lsome_loss_ratio=(Lsome_loss-Lall_nc),
+                                 Lsome_gain_ratio=(Lsome_gain-Lall_nc),
+                                 all_loss_ll=sum(loss_ll),
+                                 all_gain_ll=sum(gain_ll)))
+      
+      save(bkpt.prior,file=sprintf('%s/bkpt_prior.Rdata',tmp.dir))
+      return(bkpt.prior)
+    }
+  })
+  
+  bkptPlot <- reactive({
+    cat("bkptPlot...\n")
+    bkpt.prior <- bkptPriors()
+    
+    bkpt.prior.m <- mutate(melt(bkpt.prior, 'start_pos', c('Lall_no_loss','Lall_no_gain')),
+                           kind=ifelse(grepl('_ratio', variable), 'Log Ratio', ifelse(grepl('_ll',variable),'Broken Log Likelihood','Log No Loss/Gain')))
+
+    ggplot(bkpt.prior.m, 
+           aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + facet_grid(kind~.,scales='free_y')+ theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()  
+  })
+  
+  eachBkptPlot <- reactive({
+    cat("eachBkptPlot...\n")
+    bkpts <- bkpts.ll()
+    if (nrow(bkpts)>0) {
+      
+      bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss_ll','gain_ll')) # c('Lno_loss','Lno_gain'))
+      
+      ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()
+    } else {
+      ggplot() + geom_blank()
+    }
+  })
+  
   # merge frag and geno segments and color fragment by geno label
   # requires the windows to be the same size
   genoFragPlot <- reactive({
@@ -549,6 +709,10 @@ shinyServer(function(input, output, session) {
     oer.wg$sample.type.size <- ifelse(oer.wg$sample.type=='target',2,1) # this doesn't work! I want 1px or 2px
     oer.wg$cn.disp <- factor(ifelse(oer.wg$cn==99, oer.wg$cn, ifelse(oer.wg$cn > 5, 5, oer.wg$cn)), levels=c('0','1','2','3','4','5','99'), labels=c('0','1','2','3','4','5+','Disc'))
     
+    if (input$show_target_frag_only) {
+      oer.wg <- filter(oer.wg, sample %in% input$seg.sample)
+    }
+    
     ggplot(oer.wg, aes(x=start.map, y=ratio, yend=ratio, color=cn.disp, group=sample)) +geom_step() + cn.colors + theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0.5),'inches')) +
       xbounds() + guides(color=FALSE)
   })
@@ -558,7 +722,7 @@ shinyServer(function(input, output, session) {
     colors <- c(target='#FF0000',other='#222222')
     alpha <- c(target=1,other=0.2)
     ggplot(expected, aes(x=start.map,y=exp,group=sample,color=sample.type,alpha=sample.type)) + geom_line() +
-      theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0.5),'inches')) + 
+      theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0),'inches')) + 
       scale_color_manual(name = "sample.type",values = colors) +
       scale_alpha_manual(name = "sample.type",values = alpha) +
       xbounds() + guides(color=FALSE,alpha=FALSE)
@@ -569,8 +733,11 @@ shinyServer(function(input, output, session) {
   output$allThree <- renderPlot({
     plots <- list()
     if (input$show_cnv) { plots$cnv = cnvPlot() }
+    if (input$show_CI) { plots$CI = cnvCIPlot() }
     if (input$show_frag) { if (input$color_frag) { plots$frag=genoFragPlot() } else { plots$frag = fragPlot() } }
     if (input$show_winGeno) { plots$winGeno = winGenoPlot() }
+    if (input$show_prior) { plots$prior = bkptPlot() }
+    if (input$show_each_bkpt) { plots$bkpt = eachBkptPlot() }
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
   })
   
@@ -589,6 +756,76 @@ shinyServer(function(input, output, session) {
     })
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
     
+  })
+  
+  output$bkpts <- renderPlot({
+    bkpt.prior <- bkptPriors()
+    bkpts <- bkpts.ll()
+    bkpt.mrg <- mutate(merge(bkpt.prior, bkpts),
+                       bayes_loss=loss*some_loss,
+                       bayes_gain=gain*some_gain,
+                       bayes_no_loss=1-bayes_loss,
+                       bayes_no_gain=1-bayes_gain,
+                       Lbayes_loss=-log10(bayes_loss),
+                       Lbayes_gain=-log10(bayes_gain),
+                       Lbayes_no_loss=-log10(bayes_no_loss),
+                       Lbayes_no_gain=-log10(bayes_no_gain),
+                       loss.ratio=log10(loss/(no_bkpt+gain)),
+                       gain.ratio=log10(gain/(no_bkpt+loss)))
+    
+    if (input$show_probs == 'probs') {
+      show.vars <- c('bayes_loss','some_loss','loss','bayes_gain','some_gain','gain','no_bkpt')
+    } else {
+      show.vars <- c('Lbayes_loss','Lsome_loss','loss_ll','Lbayes_gain','Lsome_gain','gain_ll','no_bkpt_ll')
+    }
+    bkpts.plt <- melt(bkpt.mrg, c('sample','start_pos','end_pos'), show.vars)
+    bkpts.plt <- mutate(bkpts.plt, kind=ifelse(grepl('loss',variable),'Loss',ifelse(grepl('gain',variable),'Gain','NC')))
+        
+    last.sample <- input$seg.sample[length(input$seg.sample)]
+    plots <- lapply(input$seg.sample, function(this.sample) {
+      p <- ggplot(subset(bkpts.plt, sample==this.sample), aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(kind~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.35,0,.35),'in'),legend.position="bottom") + ggtitle(this.sample) 
+      if (this.sample != last.sample) {
+        return(p + guides(color='none') + theme(axis.text.x=element_blank()))
+      } else {
+        return(p)
+      }
+    })
+    grid.arrange(do.call(arrangeGrob, c(plots,list(ncol=1))))
+  })
+
+  output$bkpt.odds <- renderPlot({
+    bkpt.prior <- bkptPriors()
+    bkpts <- bkpts.ll()
+    bkpt.mrg <- mutate(merge(bkpt.prior, bkpts),
+                       bayes_loss=loss*some_loss,
+                       bayes_gain=gain*some_gain,
+                       bayes_no_loss=1-bayes_loss,
+                       bayes_no_gain=1-bayes_gain,
+                       Lbayes_loss=-log10(bayes_loss),
+                       Lbayes_gain=-log10(bayes_gain),
+                       Lbayes_no_loss=-log10(bayes_no_loss),
+                       Lbayes_no_gain=-log10(bayes_no_gain),
+                       loss.ratio=log10(loss/(no_bkpt+gain)),
+                       gain.ratio=log10(gain/(no_bkpt+loss)),
+                       bayes.loss.ratio=log10(bayes_loss/bayes_no_loss),
+                       bayes.gain.ratio=log10(bayes_gain/bayes_no_gain))
+    
+    if (input$show_bayes_odds == 'bayes') {
+      show.vars <- c('bayes.loss.ratio','bayes.gain.ratio')
+    } else {
+      show.vars <- c('loss.ratio','gain.ratio')
+    }
+
+    bkpts.plt <- melt(bkpt.mrg, c('sample','start_pos','end_pos'), show.vars)
+    bkpts.plt <- mutate(bkpts.plt, kind=ifelse(grepl('loss',variable),'Loss',ifelse(grepl('gain',variable),'Gain','NC')),
+                        pos=value>0)
+    
+    last.sample <- input$seg.sample[length(input$seg.sample)]
+    plots <- lapply(input$seg.sample, function(this.sample) {
+      p <- ggplot(subset(bkpts.plt, sample==this.sample), aes(x=start_pos, y=value, color=pos, group=variable)) + geom_point() + geom_line() + geom_hline(yintercept=0) + facet_grid(kind~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.35,0,.35),'in'),legend.position="bottom") + ggtitle(this.sample) 
+      return(p + guides(color='none') + theme(axis.text.x=element_blank()))
+    })
+    grid.arrange(do.call(arrangeGrob, c(plots,list(ncol=1))))
   })
   
 })
