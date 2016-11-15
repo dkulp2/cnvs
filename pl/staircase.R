@@ -18,7 +18,7 @@ library(RPostgreSQL)
 library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('d:/mccarroll/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','csm','postgres:localhost:5432:seq','500','1200','1000')
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -40,8 +40,7 @@ db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
 names(db.conn.params) <- c('user','host','port','dbname')
 db <- do.call(src_postgres, db.conn.params)
 
-# remove any existing bkpt table before creating a new one
-dbRemoveTable(db$con, 'bkpt')
+dbGetQuery(db$con, "BEGIN TRANSACTION")
 
 # identify candidate stairstep regions
 m.prev.idx <- 1:(nrow(csm)-2)
@@ -95,11 +94,12 @@ half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cn
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
+#csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
   # df <- csm[csm$.id=='08C79660',]
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
   cat(sample,"\n")
-  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s'", sample))
+  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s' order by bin", sample))
   exp.cn <- llply(c(0.1,1:3), function(cn) {
     rollapply(all.profiles$expected[1:(nrow(all.profiles)-half.win)]*cn, half.win, sum)
   })
@@ -108,23 +108,41 @@ csm.new <- ddply(csm, .(.id), function(df) {
     dpois(obs.cn, exp.cn[[cn]])
   })
   
+  # remove half.win from left/right of pois.cn's vectors to combine them in the next step
   pois.cnL <- llply(pois.cn, function(dp) dp[1:(length(dp)-half.win)])
   pois.cnR <- llply(pois.cn, function(dp) dp[(1+half.win):length(dp)])
-  # slide across the entire chromosome. At each position:
-  # sum_a,b poisson(x_left) * poisson(x_right)
-  bkpt.ll <- apply(
-    apply(combn(1:4, 2), 2, function(CN_AB) {
-      pois.cnL[[CN_AB[1]]]*pois.cnR[[CN_AB[2]]]
-    }), 1, sum)
   
-  no.bkpt.ll <- apply(
-    sapply(1:4, function(cn) {
-      pois.cnL[[cn]]*pois.cnR[[cn]]
-    }), 1, sum)
+  # sum over the probability of each pair of indices in idx, e.g. for gain1.idx:
+  # pois.cnL[[1]]*pois.cnR[[2]]+pois.cnL[[2]]*pois.cnR[[3]]+pois.cnL[[3]]*pois.cnL[[4]]
+  sumprob <- function(idx) {
+    -log10(apply(
+      apply(idx, 2, function(CN_AB) {
+        pois.cnL[[CN_AB[1]]]*pois.cnR[[CN_AB[2]]]
+      }), 1, sum))
+  }
+
+  gain.idx <- combn(1:4,2)
+  loss.idx <- gain.idx[c(2,1),]
+  gain1.idx <- matrix(c(1,2,2,3,3,4), nrow=2)
+  loss1.idx <- gain1.idx[c(2,1),]
+  change.idx <- cbind(gain.idx, loss.idx)
+  nochange.idx <- sapply(1:4, function(i) rep(i,2))
   
-  bkpt.df <- data.frame(sample=sample, chr=df$chr[1], bp_pos=1:length(bkpt.ll)+half.win-1, bkpt_ll=bkpt.ll, no_bkpt_ll=no.bkpt.ll)
+  bkpt.gain.ll <- sumprob(gain.idx)
+  bkpt.gain1.ll <- sumprob(gain1.idx)
+  bkpt.loss.ll <- sumprob(loss.idx)
+  bkpt.loss1.ll <- sumprob(loss1.idx)
+  bkpt.any.ll <- sumprob(change.idx)
+  no.bkpt.ll <- sumprob(nochange.idx)
+
+  bkpt.bin <- bin.map$bin[1:length(no.bkpt.ll)+half.win]
+  bkpt.df <- filter(data.frame(sample=sample, chr=df$chr[1], bkpt_bin=bkpt.bin, gain_ll=bkpt.gain.ll, 
+                               gain1_ll=bkpt.gain1.ll, loss_ll=bkpt.loss.ll, loss1_ll=bkpt.loss1.ll,
+                               any_ll=bkpt.any.ll, no_bkpt_ll=no.bkpt.ll),
+                    abs(bkpt.loss.ll)<Inf & abs(bkpt.gain.ll)<Inf & abs(no.bkpt.ll)<Inf)
   
-  # write to DB
+  # remove any results from a previous run and write to DB
+  dbGetQuery(db$con, sprintf("DELETE FROM bkpt WHERE sample='%s'",sample))
   dbWriteTable(db$con, "bkpt", bkpt.df, append=TRUE, row.names = FALSE)
 
   ml.transition2 <- function(sample, pos1, pos2, cnA, cnB) {
@@ -198,3 +216,7 @@ save(cn.segs.merged, file=sprintf("%s.smlcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.sml.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.smlmrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
+
+dbCommit(db$con)
+dbSendQuery(db$con, "VACUUM ANALYZE")
+dbDisconnect(db$con)
