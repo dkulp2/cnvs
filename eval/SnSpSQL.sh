@@ -77,22 +77,22 @@ INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SITESP' FROM PRED_CNVS;
 
 -- FLATTENED GSTRIP DELETION pipeline
 DELETE FROM KNOWN_CNVS;
-\COPY KNOWN_CNVS FROM '/cygdrive/d/mccarroll/gpc_wave2_batch1/gs_dels_flt.genotypes.txt' DELIMITER E'\t' CSV HEADER;
+\COPY KNOWN_CNVS FROM '${workDir}/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt' DELIMITER E'\t' CSV HEADER;
 INSERT INTO ALL_KNOWN_CNVS SELECT *, 'GS_DELS', 'SAMPLESEG' FROM KNOWN_CNVS;
 
 -- EXTRA-FLATTENED GSTRIP DELETION pipeline (OVER SAMPLES, TOO)
 DELETE FROM KNOWN_CNVS;
-\COPY KNOWN_CNVS FROM '/cygdrive/d/mccarroll/gpc_wave2_batch1/gs_dels_xflt.genotypes.txt' DELIMITER E'\t' CSV HEADER;
+\COPY KNOWN_CNVS FROM '${workDir}/../../gpc_wave2_batch1/gs_dels_xflt.genotypes.txt' DELIMITER E'\t' CSV HEADER;
 INSERT INTO ALL_KNOWN_CNVS SELECT *, 'GS_DELS', 'SITE' FROM KNOWN_CNVS;
 
 -- CNV+GSDEL PIPELINE, FLATTENED
 DELETE FROM KNOWN_CNVS;
-\COPY KNOWN_CNVS FROM '/cygdrive/d/mccarroll/gpc_wave2/gs_cnv_del_flt.genotypes.txt' DELIMITER E'\t' CSV HEADER
+\COPY KNOWN_CNVS FROM '${workDir}/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt' DELIMITER E'\t' CSV HEADER
 INSERT INTO ALL_KNOWN_CNVS SELECT *, 'GS_CNV_DEL', 'SAMPLESEGSP' FROM KNOWN_CNVS;
 
 -- CNV+GSDEL PIPELINE, EXTRA-FLATTENED (OVER SAMPLES, TOO) 
 DELETE FROM KNOWN_CNVS;
-\COPY KNOWN_CNVS FROM '/cygdrive/d/mccarroll/gpc_wave2/gs_cnv_del_xflt.genotypes.txt' DELIMITER E'\t' CSV HEADER
+\COPY KNOWN_CNVS FROM '${workDir}/../../gpc_wave2/gs_cnv_del_xflt.genotypes.txt' DELIMITER E'\t' CSV HEADER
 INSERT INTO ALL_KNOWN_CNVS SELECT *, 'GS_CNV_DEL', 'SITESP' FROM KNOWN_CNVS;
 
 -- Remove manually curated "bad" DELS
