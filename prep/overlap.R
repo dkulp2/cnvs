@@ -119,16 +119,16 @@ read_known_file <- function(fn) {
 } 
 
 # create a flattened set of DELs with paired.reads > 0, CQ>13, no conflict CNs
-gstrip_dels <- read_known_file("d:/mccarroll/gpc_wave2_batch1/gs_dels.genotypes.txt")
+gstrip_dels <- read_known_file("/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
 ret <- flattenFile(gstrip_dels,
-                   "d:/mccarroll/gpc_wave2_batch1/gs_dels_flt.genotypes.txt",
-                   "d:/mccarroll/gpc_wave2_batch1/gs_dels_xflt.genotypes.txt",
+                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_flt.genotypes.txt",
+                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_xflt.genotypes.txt",
                    restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE)
 
-gstrip_cnv_del <- rbind(gstrip_dels, read_known_file("D:/mccarroll/gpc_wave2/gs_cnv.genotypes.txt"))
+gstrip_cnv_del <- rbind(gstrip_dels, read_known_file("/home/dkulp/data/gpc_wave2/gs_cnv.genotypes.txt"))
 ret <- flattenFile(gstrip_cnv_del,
-                   "D:/mccarroll/gpc_wave2/gs_cnv_del_flt.genotypes.txt",
-                   "D:/mccarroll/gpc_wave2/gs_cnv_del_xflt.genotypes.txt",
+                   "/home/dkulp/data/gpc_wave2/gs_cnv_del_flt.genotypes.txt",
+                   "/home/dkulp/data/gpc_wave2/gs_cnv_del_xflt.genotypes.txt",
                    remove.discordant.cn = FALSE)
 
 
