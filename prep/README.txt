@@ -40,7 +40,7 @@ Discordant calls are marked with a CN=99.
 
 Load database with profile data by first creating two text files from the profile:
 
- run profile2db.pl -i /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.dat.gz -s /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.seg.txt.gz -p /home/dkulp/mccarroll/gpc_wave2_batch1/profile_seq_20_100.pro.txt.gz
+ run profile2db.pl -i /home/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.dat.gz -s /home/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.seg.txt.gz -p /home/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.pro.txt.gz
 
 And then editing profile2db.sql to set the correct filenames and then executing, e.g.
 
