@@ -91,10 +91,10 @@ shinyUI(fluidPage(
                            plotOutput("cnqs", height="800px")),
                   tabPanel("Per Sample Breakpoints",
                            plotOutput("bkpts", height="800px"),
-                           radioButtons("show_probs","Display value:", c("Prob"="probs", "Log"="log"), 'log')),
+                           radioButtons("show_probs","Display value:", c("Prob"="probs", "Log"="log",'Normalized'="Z","No Loss/Gain"="no"), 'log')),
                   tabPanel("Per Sample Odds",
                            plotOutput("bkpt.odds", height="800px"),
-                           radioButtons("show_bayes_odds","Display value:", c("Log Odds of Bayesian Estimates"="bayes", "Log Odds of Likelihood Estimates"="likelihood")))
+                           radioButtons("show_bayes_odds","Display value:", c("Log Odds of Bayesian Estimates"="bayes", "Log Odds of Normalized Bayesian Estimates"="bayesZ","Log Odds of Likelihood Estimates"="likelihood")))
       )
     )
   )

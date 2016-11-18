@@ -448,7 +448,20 @@ shinyServer(function(input, output, session) {
       #                 Lno_loss=-log10(gain+no_bkpt), Lno_gain=-log10(loss+no_bkpt))
       
       bkpts <- mutate(bkpts,
-                      loss=10^-loss_ll, gain=10^-gain_ll, any=10^-any_ll, no_bkpt=10^-no_bkpt_ll)
+                      loss=10^-loss_ll, 
+                      gain=10^-gain_ll, 
+                      any=10^-any_ll, 
+                      no_bkpt=10^-no_bkpt_ll,
+                      nc=no_bkpt,
+                      lossZ=loss/(loss+gain+no_bkpt),
+                      gainZ=gain/(loss+gain+no_bkpt),
+                      no_bkptZ=no_bkpt/(loss+gain+no_bkpt),
+                      LlossZ=-log10(lossZ),
+                      LgainZ=-log10(gainZ),
+                      Lno_loss=-log10(1-loss),
+                      Lno_gain=-log10(1-gain),
+                      Lno_lossZ=-log10(1-lossZ),
+                      Lno_gainZ=-log10(1-gainZ))
     }
     save(bkpts,file=sprintf('%s/bkpts.Rdata',tmp.dir))
     return(bkpts)
@@ -628,9 +641,9 @@ shinyServer(function(input, output, session) {
       
       # first normalize, then compute NOT probs
       bkpts <- mutate(bkpts,
-                      loss = 10^-loss_ll*6./16,
-                      gain = 10^-gain_ll*6./16,
-                      nc = 10^-no_bkpt_ll*4./16,
+                      loss = 10^-loss_ll,
+                      gain = 10^-gain_ll,
+                      nc = 10^-no_bkpt_ll,
                       tot=loss+gain+nc,
                       lossZ = loss/tot,
                       gainZ = gain/tot,
@@ -642,28 +655,16 @@ shinyServer(function(input, output, session) {
                       Lno_gain=-log10(1-gainZ)
       )
       
-      # Don't normalize.
-      bkpts <- mutate(bkpts,
-                      no_loss_ll=-log10(1-10^-loss_ll),  # <—- This is just wrong, but normalizing, above, doesn't seem to work. P(x|loss)
-                      no_gain_ll=-log10(1-10^-gain_ll)
-      )
-      
       bkpt.prior <- mutate(ddply(bkpts, .(start_pos), summarize,
-                                 max_gain=max(gainZ),
-                                 max_loss=max(lossZ),
                                  Lall_no_loss=sum(Lno_loss),
                                  Lall_no_gain=sum(Lno_gain),
                                  Lall_nc=sum(Lnc),
-                                 all_no_loss_ll=sum(no_loss_ll), 
-                                 all_no_gain_ll=sum(no_gain_ll),
                                  some_loss=1-10^(-Lall_no_loss), 
                                  some_gain=1-10^(-Lall_no_gain),
+                                 some_nc=1-10^(-Lall_nc),
                                  Lsome_loss=-log10(some_loss), 
                                  Lsome_gain=-log10(some_gain),
-                                 Lsome_loss_ratio=(Lsome_loss-Lall_nc),
-                                 Lsome_gain_ratio=(Lsome_gain-Lall_nc),
-                                 all_loss_ll=sum(loss_ll),
-                                 all_gain_ll=sum(gain_ll)))
+                                 Lsome_nc=-log10(some_nc)))
       
       save(bkpt.prior,file=sprintf('%s/bkpt_prior.Rdata',tmp.dir))
       return(bkpt.prior)
@@ -686,9 +687,9 @@ shinyServer(function(input, output, session) {
     bkpts <- bkpts.ll()
     if (nrow(bkpts)>0) {
       
-      bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss_ll','gain_ll')) # c('Lno_loss','Lno_gain'))
-      
-      ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()
+      bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss_ll','gain_ll','Lno_lossZ','Lno_gainZ')) 
+      bkpts <- mutate(bkpts, kind=ifelse(grepl('Z',variable),'Z',ifelse(grepl('no_',variable),'No','')))
+      ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample+kind~.,scales="free_y") + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()
     } else {
       ggplot() + geom_blank()
     }
@@ -758,25 +759,51 @@ shinyServer(function(input, output, session) {
     
   })
   
-  output$bkpts <- renderPlot({
+  bkpts.bayes <- reactive({
     bkpt.prior <- bkptPriors()
     bkpts <- bkpts.ll()
     bkpt.mrg <- mutate(merge(bkpt.prior, bkpts),
                        bayes_loss=loss*some_loss,
                        bayes_gain=gain*some_gain,
+                       bayes_nc=nc*some_nc,
+                       bayes_tot=bayes_loss+bayes_gain+bayes_nc,
+                       bayes_lossZ=bayes_loss/bayes_tot,
+                       bayes_gainZ=bayes_gain/bayes_tot,
                        bayes_no_loss=1-bayes_loss,
                        bayes_no_gain=1-bayes_gain,
+                       bayes_no_loss2=(1-loss)*(1-some_loss),
+                       bayes_no_gain2=(1-gain)*(1-some_gain),
+                       bayes_no_lossZ=1-bayes_lossZ,
+                       bayes_no_gainZ=1-bayes_gainZ,
                        Lbayes_loss=-log10(bayes_loss),
                        Lbayes_gain=-log10(bayes_gain),
+                       Lbayes_lossZ=-log10(bayes_lossZ),
+                       Lbayes_gainZ=-log10(bayes_gainZ),
                        Lbayes_no_loss=-log10(bayes_no_loss),
                        Lbayes_no_gain=-log10(bayes_no_gain),
+                       Lbayes_no_loss2=-log10(bayes_no_loss2),
+                       Lbayes_no_gain2=-log10(bayes_no_gain2),
                        loss.ratio=log10(loss/(no_bkpt+gain)),
-                       gain.ratio=log10(gain/(no_bkpt+loss)))
-    
+                       gain.ratio=log10(gain/(no_bkpt+loss)),
+                       loss.ratioZ=log10(lossZ/(no_bkptZ+gainZ)),
+                       gain.ratioZ=log10(gainZ/(no_bkptZ+lossZ)),
+                       bayes.loss.ratio=log10(bayes_loss/bayes_no_loss),
+                       bayes.gain.ratio=log10(bayes_gain/bayes_no_gain),
+                       bayes.loss.ratioZ=log10(bayes_lossZ/bayes_no_lossZ),
+                       bayes.gain.ratioZ=log10(bayes_gainZ/bayes_no_gainZ))
+  })
+  
+  output$bkpts <- renderPlot({
+    bkpt.mrg <- bkpts.bayes()
+        
     if (input$show_probs == 'probs') {
       show.vars <- c('bayes_loss','some_loss','loss','bayes_gain','some_gain','gain','no_bkpt')
+    } else if (input$show_probs == 'no') {
+      show.vars <- c('Lbayes_no_loss2', 'Lall_no_loss', 'Lno_loss', 'Lbayes_no_gain2','Lall_no_gain','Lno_gain')
+    } else if (input$show_probs == 'Z') {
+      show.vars <- c('Lbayes_lossZ','Lsome_loss','LlossZ','Lbayes_gainZ','Lsome_gain','LgainZ')
     } else {
-      show.vars <- c('Lbayes_loss','Lsome_loss','loss_ll','Lbayes_gain','Lsome_gain','gain_ll','no_bkpt_ll')
+      show.vars <- c('Lbayes_loss','Lsome_loss','loss_ll','Lbayes_gain','Lsome_gain','gain_ll')
     }
     bkpts.plt <- melt(bkpt.mrg, c('sample','start_pos','end_pos'), show.vars)
     bkpts.plt <- mutate(bkpts.plt, kind=ifelse(grepl('loss',variable),'Loss',ifelse(grepl('gain',variable),'Gain','NC')))
@@ -794,23 +821,11 @@ shinyServer(function(input, output, session) {
   })
 
   output$bkpt.odds <- renderPlot({
-    bkpt.prior <- bkptPriors()
-    bkpts <- bkpts.ll()
-    bkpt.mrg <- mutate(merge(bkpt.prior, bkpts),
-                       bayes_loss=loss*some_loss,
-                       bayes_gain=gain*some_gain,
-                       bayes_no_loss=1-bayes_loss,
-                       bayes_no_gain=1-bayes_gain,
-                       Lbayes_loss=-log10(bayes_loss),
-                       Lbayes_gain=-log10(bayes_gain),
-                       Lbayes_no_loss=-log10(bayes_no_loss),
-                       Lbayes_no_gain=-log10(bayes_no_gain),
-                       loss.ratio=log10(loss/(no_bkpt+gain)),
-                       gain.ratio=log10(gain/(no_bkpt+loss)),
-                       bayes.loss.ratio=log10(bayes_loss/bayes_no_loss),
-                       bayes.gain.ratio=log10(bayes_gain/bayes_no_gain))
+    bkpt.mrg <- bkpts.bayes()
     
-    if (input$show_bayes_odds == 'bayes') {
+    if (input$show_bayes_odds == 'bayesZ') {
+      show.vars <- c('bayes.loss.ratioZ','bayes.gain.ratioZ')
+    } else if (input$show_bayes_odds == 'bayes') {
       show.vars <- c('bayes.loss.ratio','bayes.gain.ratio')
     } else {
       show.vars <- c('loss.ratio','gain.ratio')
