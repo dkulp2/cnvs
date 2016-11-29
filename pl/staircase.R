@@ -15,7 +15,6 @@
 library(plyr)
 library(dplyr)
 library(RPostgreSQL)
-library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 #cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000')
@@ -23,8 +22,8 @@ cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
 max.join <- as.numeric(cmd.args[4])  # size (in nt) of runs to span if flanking calls are the same, e.g. 500
-win.size <- as.numeric(cmd.args[5])
-region.offset <- as.numeric(cmd.args[6])
+profile.group.size <- as.numeric(cmd.args[5])
+win.size <- as.numeric(cmd.args[6])
 
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
@@ -49,7 +48,7 @@ m.next.idx <- 3:(nrow(csm))
 
 # candidates holds the indices into csm of the middle region of a up or down 1-copy difference staircase
 # NOTE: assume csm is already ordered by sample and fragment position
-candidates <- m.idx[csm$len[m.idx]<win.size & 
+candidates <- m.idx[csm$len[m.idx]<profile.group.size & 
                       (csm$cn[m.idx] - csm$cn[m.prev.idx] == csm$cn[m.next.idx] - csm$cn[m.idx]) & 
                       (abs(csm$cn[m.next.idx] - csm$cn[m.prev.idx]) == 2) &
                       csm$.id[m.prev.idx] == csm$.id[m.next.idx]]
@@ -84,12 +83,6 @@ conf.int <- function(p, conf=0.95) {
   return(list(left=i-best.pos+1, right=j-best.pos-1))
 }
 
-bin.map <- dbGetQuery(db$con, "select * from profile_segment")
-rownames(bin.map) <- bin.map$bin
-
-win.size.bins <- first(which(cumsum(bin.map$elength)>=region.offset)) # set window size (in bins) to the size of region.offset
-
-half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
 
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
@@ -99,59 +92,19 @@ csm.new <- ddply(csm, .(.id), function(df) {
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
   cat(sample,"\n")
-  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s' order by bin", sample))
-  exp.cn <- llply(c(0.1,1:3), function(cn) {
-    rollapply(all.profiles$expected[1:(nrow(all.profiles)-half.win)]*cn, half.win, sum)
-  })
-  obs.cn <- rollapply(all.profiles$observed[1:(nrow(all.profiles)-half.win)], half.win, sum)
-  pois.cn <- llply(1:4, function(cn) {
-    dpois(obs.cn, exp.cn[[cn]])
-  })
-  
-  # remove half.win from left/right of pois.cn's vectors to combine them in the next step
-  pois.cnL <- llply(pois.cn, function(dp) dp[1:(length(dp)-half.win)])
-  pois.cnR <- llply(pois.cn, function(dp) dp[(1+half.win):length(dp)])
-  
-  # sum over the probability of each pair of indices in idx, e.g. for gain1.idx:
-  # pois.cnL[[1]]*pois.cnR[[2]]+pois.cnL[[2]]*pois.cnR[[3]]+pois.cnL[[3]]*pois.cnL[[4]]
-  sumprob <- function(idx) {
-    -log10(apply(
-      apply(idx, 2, function(CN_AB) {
-        pois.cnL[[CN_AB[1]]]*pois.cnR[[CN_AB[2]]]
-      }), 1, sum))
-  }
 
-  gain.idx <- combn(1:4,2)
-  loss.idx <- gain.idx[c(2,1),]
-  gain1.idx <- matrix(c(1,2,2,3,3,4), nrow=2)
-  loss1.idx <- gain1.idx[c(2,1),]
-  change.idx <- cbind(gain.idx, loss.idx)
-  nochange.idx <- sapply(1:4, function(i) rep(i,2))
+  pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT bm.chrom, bm.start_pos, bm.end_pos, pois.* FROM pois, profile_segment bm WHERE sample='%s' AND pois.bin=bm.bin", sample))
+  pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
+  pois.cnR <- as.list(pois.cn.df[,grep("cnR",names(pois.cn.df))])
   
-  bkpt.gain.ll <- sumprob(gain.idx)
-  bkpt.gain1.ll <- sumprob(gain1.idx)
-  bkpt.loss.ll <- sumprob(loss.idx)
-  bkpt.loss1.ll <- sumprob(loss1.idx)
-  bkpt.any.ll <- sumprob(change.idx)
-  no.bkpt.ll <- sumprob(nochange.idx)
-
-  bkpt.bin <- bin.map$bin[1:length(no.bkpt.ll)+half.win]
-  bkpt.df <- filter(data.frame(sample=sample, chr=df$chr[1], bkpt_bin=bkpt.bin, gain_ll=bkpt.gain.ll, 
-                               gain1_ll=bkpt.gain1.ll, loss_ll=bkpt.loss.ll, loss1_ll=bkpt.loss1.ll,
-                               any_ll=bkpt.any.ll, no_bkpt_ll=no.bkpt.ll),
-                    abs(bkpt.loss.ll)<Inf & abs(bkpt.gain.ll)<Inf & abs(no.bkpt.ll)<Inf)
-  
-  # remove any results from a previous run and write to DB
-  dbGetQuery(db$con, sprintf("DELETE FROM bkpt WHERE sample='%s'",sample))
-  dbWriteTable(db$con, "bkpt", bkpt.df, append=TRUE, row.names = FALSE)
-
   ml.transition2 <- function(sample, pos1, pos2, cnA, cnB) {
     cnA <- ifelse(cnA > 3, 4, cnA+1)  # map CN to index into pois.cn. CN > 3 => CN:=3
     cnB <- ifelse(cnB > 3, 4, cnB+1)
-    posL <- pos1-region.offset
-    posR <- pos2+region.offset
-    binL <- min(which(bin.map$end_pos >= posL))
-    binR <- max(which(bin.map$start_pos <= posR))
+    posL <- pos1-win.size
+    posR <- pos2+win.size
+    binL <- min(which(pois.cn.df$end_pos >= posL))
+    binR <- max(which(pois.cn.df$start_pos <= posR))
+    
     bin.count <- binR - binL + 1
     pA <- pois.cn[[cnA]][binL:(binL+bin.count-win.size.bins)] 
     pB <- pois.cn[[cnB]][(binL+half.win):(binL+bin.count-half.win)]
@@ -167,8 +120,8 @@ csm.new <- ddply(csm, .(.id), function(df) {
       binCI.R <- best.bin + CI$right
       
       # bounds are generous, including the furthest base from the best.pos in the transition bins.
-      left.bound <- bin.map[binCI.L-1,'start_pos']
-      right.bound <- bin.map[binCI.R,'end_pos']
+      left.bound <- pois.cn.df[binCI.L-1,'start_pos']
+      right.bound <- pois.cn.df[binCI.R,'end_pos']
       
       return(data.frame(pos=best.pos, left.bound=left.bound, right.bound=right.bound, win.size=posR-posL+1, left.tail=jp.norm[1], right.tail=jp.norm[length(jp.norm)], binL=binL, binR=binR, best.bin=best.bin, binCI.L=binCI.L, binCI.R=binCI.R))
     } else {
