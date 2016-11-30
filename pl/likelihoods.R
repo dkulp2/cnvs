@@ -7,7 +7,7 @@
 # #1: a sites file to identify the min/max regions per chromosome to process
 # #2: db connection - user:host:port:dbname - profile data is read from this connection
 # #3: the size of the sliding window in which the left half is CN_a and the right is CN_b
-# #4: the label for the data set
+# #4: the label for the data set, e.g. "gpc_wave2_batch1"
 
 library(dplyr)
 library(plyr)
@@ -15,7 +15,7 @@ library(RPostgreSQL)
 library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','dkulp:localhost:5432:seq','1000','A')
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','dkulp:localhost:5432:seq','1000','gpc_wave2_batch1')
 cnv.seg.fn <- cmd.args[1]
 db.conn.str <- cmd.args[2]
 win.size <- as.numeric(cmd.args[3])
@@ -59,17 +59,17 @@ sapply(samples$sample, function(sample) {
   # remove half.win from left/right of pois.cn's vectors to combine them in the next step
   pois.cnL <- llply(pois.cn, function(dp) dp[1:(length(dp)-half.win)])
   pois.cnR <- llply(pois.cn, function(dp) dp[(1+half.win):length(dp)])
-
+  
   # add labels 
   names(pois.cnL) <- gsub('\\.','_',sprintf("cnL_%s", cn.vals))
   names(pois.cnR) <- gsub('\\.','_',sprintf("cnR_%s", cn.vals))
   
   # flatten pois.cnL and pois.cnR into a single data.frame
   # bin is the leftmost bin of cnL
-  pois.cn.df <- cbind(data.frame(sample=sample, 
+  pois.cn.df <- cbind(data.frame(label=data.label, sample=sample, 
                                  bin=all.profiles$bin[1:(nrow(all.profiles)-(half.win-1)-half.win)]), 
                       do.call(data.frame, pois.cnL), do.call(data.frame, pois.cnR))
-    
+  
   # remove any results from a previous run and write to DB
   # If table doesn't exist, then it will be created on the first write
   pois.exists <- dbExistsTable(db$con, "pois")
@@ -115,3 +115,8 @@ sapply(samples$sample, function(sample) {
   dbWriteTable(db$con, "bkpt", bkpt.df, append=TRUE, row.names = FALSE)
   
 })
+
+dbCommit(db$con)
+dbSendQuery(db$con, "VACUUM ANALYZE bkpt")
+dbSendQuery(db$con, "VACUUM ANALYZE pois")
+dbDisconnect(db$con)

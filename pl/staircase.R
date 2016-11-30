@@ -10,7 +10,7 @@
 # #3: db connection - user:host:port:dbname - profile data is read from this connection
 # #4: the max size of intermediate regions that was skipped when joining
 # #5: the window size that was used for aggregating profiles
-# #6: the size of the window when scanning for boundary using MLE method
+# #6: the size of the window when scanning for boundary using MLE method (e.g. 1000nt)
 
 library(plyr)
 library(dplyr)
