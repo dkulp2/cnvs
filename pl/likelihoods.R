@@ -1,4 +1,37 @@
 # likelihoods.R - scan across profiles and store likelihoods of gain, loss, nc at each position in chromosomes for each sample.
+# 
+# Two tables are generated with rows for each bin and sample, labeled with the data.label:
+#   pois - poison likelihoods for a set of bins half the size of win.size to the left and right of each position for each copy number 
+#   bkpt - various combinations of pois representing different types of transitions, i.e. gain, loss, no change.
+#
+#Table "public.pois"
+#  Column  |       Type       | Modifiers
+# ---------+------------------+-----------
+#  label   | text             |
+#  sample  | text             |
+#  bin     | integer          |
+#  cnL_0_1 | double precision |
+#  cnL_1   | double precision |
+#  cnL_2   | double precision |
+#  cnL_3   | double precision |
+#  cnR_0_1 | double precision |
+#  cnR_1   | double precision |
+#  cnR_2   | double precision |
+#  cnR_3   | double precision |
+#
+#
+# Table "public.bkpt"
+#    Column   |         Type         | Modifiers
+# ------------+----------------------+-----------
+#  sample     | text                 |
+#  chr        | character varying(2) |
+#  bkpt_bin   | integer              |
+#  gain_ll    | double precision     |
+#  gain1_ll   | double precision     |
+#  loss_ll    | double precision     |
+#  loss1_ll   | double precision     |
+#  any_ll     | double precision     |
+#  no_bkpt_ll | double precision     |
 #
 # Author: David Kulp, dkulp@broadinstitute.org
 #
