@@ -11,7 +11,7 @@ library(plyr)
 library(dplyr)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('d:/mccarroll/cnv_seg.12.500/sites_cnv_segs.txt','smlcsm')
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 
@@ -56,7 +56,8 @@ overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
            y.min=min(df2[[end.name]][i:j]), y.max=max(df2[[end.name]][i:j]),
            x.diff=x.max-x.min, y.diff=y.max-y.min,
            n=j-i+1,
-           seg=paste0(unique(df2[[seg]][i:j]), collapse = ';'))
+           seg=paste0(unique(df2[[seg]][i:j]), collapse = ';'),
+           samples=paste0(unique(df2[['.id']][i:j]), collapse=';'))
   }
   df.merged <- ddply(df.merged, .(i,j), df.merge)
   
@@ -64,9 +65,17 @@ overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
   
 }
 
+# collapse by CN
 cn.segs.merged <- as.tbl(mutate(ddply(csm, .(cn, chr), overlap), copy.number=addNA(as.factor(cn))))
 cn.segs.merged$.id <- 'All'
 save(cn.segs.merged, file=sprintf("%s.smlxcsm.Rdata",cnv.seg.fn))
+
 write.table(cn.segs.merged[,c('.id', 'seg', 'chr', 'start.map', 'start.map', 'start.map', 'end.map', 'end.map', 'end.map', 'copy.number')], file=sprintf("%s.flt.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+# collapse all, merging different CNs
+cn.segs.merged <- as.tbl(mutate(ddply(filter(csm, cn!=2), .(chr), overlap)))
+save(cn.segs.merged, file=sprintf("%s.smlx2csm.Rdata",cnv.seg.fn))
+
+
 
 
