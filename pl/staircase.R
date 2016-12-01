@@ -39,8 +39,6 @@ db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
 names(db.conn.params) <- c('user','host','port','dbname')
 db <- do.call(src_postgres, db.conn.params)
 
-dbGetQuery(db$con, "BEGIN TRANSACTION")
-
 # identify candidate stairstep regions
 m.prev.idx <- 1:(nrow(csm)-2)
 m.idx <- 2:(nrow(csm)-1)
@@ -87,12 +85,12 @@ conf.int <- function(p, conf=0.95) {
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
-#csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
+  #csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
   # df <- csm[csm$.id=='08C79660',]
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
   cat(sample,"\n")
-
+  
   pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT bm.chrom, bm.start_pos, bm.end_pos, pois.* FROM pois, profile_segment bm WHERE sample='%s' AND pois.bin=bm.bin", sample))
   pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
   pois.cnR <- as.list(pois.cn.df[,grep("cnR",names(pois.cn.df))])
@@ -111,7 +109,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
     jp <- pA * pB    # joint likelihood
     jp.norm <- jp / sum(jp)  # normalized
     best.jp.bin <- which.max(jp.norm)
-#    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
+    #    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
     if (length(best.jp.bin)>0) { # NAs if length is zero
       best.bin <- binL+(best.jp.bin-1)+half.win # first bin passed the transition
       best.pos <- bin.map[best.bin,'start_pos'] # left side of bin is the transition point between bins
@@ -170,6 +168,4 @@ write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.numbe
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.smlmrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
 
-dbCommit(db$con)
-dbSendQuery(db$con, "VACUUM ANALYZE")
 dbDisconnect(db$con)
