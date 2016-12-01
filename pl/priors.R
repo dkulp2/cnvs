@@ -1,0 +1,110 @@
+# priors.R - for each region with a predicted CNV breakpoint, generate a prior from the likelihoods of the 
+#           samples with a CNV and save
+#
+#
+# Author: David Kulp, dkulp@broadinstitute.org
+#
+# Usage: Called using rscript:
+#
+# #1: filename base - e.g. sites_cnv_segs.txt
+# #2: method - which set of flattened segments to read? ('smlxcsm'). File read is base.method.Rdata
+# #3: db connection - user:host:port:dbname - profile data is read from this connection
+# #4: the label for the data set to read and write, e.g. "gpc_wave2_batch1"
+# #5: the number of bases upstream and downstream from the breakpoint region to consider
+
+library(plyr)
+library(dplyr)
+library(RPostgreSQL)
+library(reshape)
+
+cmd.args <- commandArgs(trailingOnly = TRUE)
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
+cnv.seg.fn <- cmd.args[1]
+cnv.seg.method <- cmd.args[2]
+db.conn.str <- cmd.args[3]
+data.label <- cmd.args[4]
+PAD <- as.numeric(cmd.args[5])
+
+load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
+cnvx <- filter(as.tbl(cn.segs.merged), x.diff < quantile(cn.segs.merged$x.diff,.95) & y.diff < quantile(cn.segs.merged$y.diff,.95))
+cnvx$freq <- unlist(lapply(strsplit(cnvx$samples,';'), function(s) { length(s) }))
+cnvx$samples.quoted <- unlist(lapply(strsplit(cnvx$samples,';'), function(s) { paste(s,collapse="','") }))
+
+
+# connect to DB
+db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
+names(db.conn.params) <- c('user','host','port','dbname')
+db <- do.call(src_postgres, db.conn.params)
+
+dbGetQuery(db$con, "BEGIN TRANSACTION")
+
+mk.prior <- function(chr, x1, x2, samples) {
+  bkpts <- dbGetQuery(db$con, sprintf("SELECT b.sample, ps.bin, ps.start_pos, ps.end_pos, loss_ll, gain_ll, no_bkpt_ll FROM bkpt b, profile_segment ps WHERE ps.chrom ='%s' AND ps.start_pos < %s AND ps.start_pos > %s AND b.sample IN ('%s') AND b.bkpt_bin = ps.bin", 
+                                      chr, x2, x1, samples))
+
+  # first normalize, then compute NOT probs
+  bkpts <- mutate(bkpts,
+                  loss = 10^-loss_ll,
+                  gain = 10^-gain_ll,
+                  nc = 10^-no_bkpt_ll,
+                  tot=loss+gain+nc,
+                  lossZ = loss/tot,
+                  gainZ = gain/tot,
+                  ncZ = nc/tot,
+                  Lloss = -log10(lossZ),
+                  Lgain = -log10(gainZ),
+                  Lnc = -log10(ncZ),
+                  Lno_loss=-log10(1-lossZ),
+                  Lno_gain=-log10(1-gainZ)
+  )
+  
+  bkpt.prior <- mutate(ddply(bkpts, .(bin,start_pos), summarize,
+                             Lall_no_loss=sum(Lno_loss),
+                             Lall_no_gain=sum(Lno_gain),
+                             Lall_nc=sum(Lnc),
+                             some_loss=1-10^(-Lall_no_loss), 
+                             some_gain=1-10^(-Lall_no_gain),
+                             some_nc=1-10^(-Lall_nc),
+                             Lsome_loss=-log10(some_loss), 
+                             Lsome_gain=-log10(some_gain),
+                             Lsome_nc=-log10(some_nc)))
+  
+}
+
+plot.prior <- function(bkpt.prior) {
+  bkpt.prior.m <- mutate(melt(bkpt.prior, 'start_pos', c('Lall_no_loss','Lall_no_gain')),
+                         kind=ifelse(grepl('_ratio', variable), 'Log Ratio', ifelse(grepl('_ll',variable),'Broken Log Likelihood','Log No Loss/Gain')))
+  
+  ggplot(bkpt.prior.m, 
+         aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + facet_grid(kind~.,scales='free_y')+ theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob")  
+  
+}
+
+save.prior <- function(bkpt.prior, chr, seg, samples, label) {
+  # remove any results from a previous run and write to DB
+  # If table doesn't exist, then it will be created on the first write
+  prior.exists <- dbExistsTable(db$con, "prior")
+  if (prior.exists) {
+    dbGetQuery(db$con, sprintf("DELETE FROM prior WHERE seg='%s' AND label='%s'",seg, label))
+  }
+  dbWriteTable(db$con, "prior", cbind(bkpt.prior,data.frame(chr=chr,seg=seg,samples=samples,label=label)), append=TRUE, row.names = FALSE)
+  if (!prior.exists) {  # new table
+    dbGetQuery(db$con, "CREATE INDEX ON prior(label, seg)")
+  }
+  
+}
+
+# for each start.map and stop.map 
+#  retrieve the prior data for the samples in the cluster
+ddply(cnvx, .(chr,seg), function(df) {
+  cat(sprintf("%s:%s-%s\n", chr, df$start.map, df$end.map))
+  bkpt.prior <- mk.prior(df$chr, df$x.min-PAD, df$x.max+PAD, df$samples.quoted)
+  save.prior(bkpt.prior, df$chr, df$seg, df$samples, data.label)
+  bkpt.prior <- mk.prior(df$chr, df$y.min-PAD, df$y.max+PAD, df$samples.quoted)
+  save.prior(bkpt.prior, df$chr, df$seg, df$samples, data.label)
+})
+
+dbCommit(db$con)
+dbSendQuery(db$con, "VACUUM ANALYZE prior")
+dbDisconnect(db$con)
+
