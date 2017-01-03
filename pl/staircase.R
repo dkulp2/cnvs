@@ -11,19 +11,21 @@
 # #4: the max size of intermediate regions that was skipped when joining
 # #5: the window size that was used for aggregating profiles
 # #6: the size of the window when scanning for boundary using MLE method (e.g. 1000nt)
+# #7: data set label
 
 library(plyr)
 library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000')
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','gpc_wave2_batch1')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
 max.join <- as.numeric(cmd.args[4])  # size (in nt) of runs to span if flanking calls are the same, e.g. 500
 profile.group.size <- as.numeric(cmd.args[5])
 win.size <- as.numeric(cmd.args[6])
+data.label <- cmd.args[7]
 
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
@@ -86,12 +88,13 @@ conf.int <- function(p, conf=0.95) {
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
   #csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
+  df <- filter(csm, .id %in% c('MH0131634'))
   # df <- csm[csm$.id=='08C79660',]
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
   cat(sample,"\n")
   
-  pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT bm.chrom, bm.start_pos, bm.end_pos, pois.* FROM pois, profile_segment bm WHERE sample='%s' AND pois.bin=bm.bin", sample))
+  pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom", data.label, sample))
   pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
   pois.cnR <- as.list(pois.cn.df[,grep("cnR",names(pois.cn.df))])
   
@@ -154,7 +157,12 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$start.best.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$best.bin))
   df$start.binCI.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.L))
   df$start.binCI.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.R))
-  
+
+  df$cn.2 <- ifelse(is.na(df$cn), 2, df$cn)
+  df$dCN.R <- c(df$cn.2[2:nrow(df)]-df$cn.2[1:(nrow(df)-1)],2-df$cn.2[nrow(df)])
+  df$dCN.L <- c(2-df$cn.2[1], df$dCN.R[1:nrow(df)-1])
+  df$dL <- ifelse(df$dCN.L > 0, 'G', ifelse(df$dCN.L < 0, 'L', 'N'))
+  df$dR <- ifelse(df$dCN.R > 0, 'G', ifelse(df$dCN.R < 0, 'L', 'N'))
   
   return(df)
 })
@@ -162,6 +170,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
 cn.segs.merged <- mutate(csm.new, 
                          seg=sprintf("SEG_%s_%s_%s", chr, start.map, end.map),
                          label=sprintf("%s_%s",seg,.id))
+
 
 save(cn.segs.merged, file=sprintf("%s.smlcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.sml.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
