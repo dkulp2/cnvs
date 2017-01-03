@@ -319,6 +319,17 @@ shinyServer(function(input, output, session) {
       csm.all <- rbind(csm.all, cn.segs.merged)
     }
     
+    if (input$show_bayes) {
+      cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.bayescsm.Rdata")
+      load(cn.segs.merged.fn)
+      cn.segs.merged$seg <- sub('_[^_]+$','',cn.segs.merged$label, perl = TRUE)
+      cn.segs.merged$evidence <- 'Bayes'
+      cn.segs.merged <- select(mutate(cn.segs.merged, copy.number=addNA(as.factor(cn)), len=end.map-start.map),
+                               .id, cn, chr, start.map, end.map, copy.number, len, seg, label, evidence)
+      cat(sprintf("Loaded %s CNVs from %s\n",nrow(cn.segs.merged), cn.segs.merged.fn))
+      csm.all <- rbind(csm.all, cn.segs.merged)
+    }
+    
     return(csm.all)
   })
   
@@ -561,7 +572,23 @@ shinyServer(function(input, output, session) {
     cat("cnvCIPlot...\n")  
     cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.smlcsm.Rdata")
     load(cn.segs.merged.fn)
-    x <- filter(cn.segs.merged, 
+    smlcsm <- cn.segs.merged
+    smlcsm$method <- 'MLE'
+    smlcsm <- select(smlcsm, chr, end.map, start.map, cn, len, .id, start.map.L, start.map.R, end.map.L, end.map.R,method)
+    
+    if (input$show_bayes) {
+      cn.segs.merged.fn <- paste0(data.dir,"/sites_cnv_segs.txt.bayescsm.Rdata")
+      load(cn.segs.merged.fn)
+      bayescsm <- cn.segs.merged
+      bayescsm$method <- 'Bayes'
+      bayescsm$len <- bayescsm$end.map - bayescsm$start.map
+      csm <- rbind(smlcsm,
+                   select(bayescsm, chr, end.map, start.map, cn, len, .id, start.map.L=start.CI.L, start.map.R=start.CI.R, end.map.L=end.CI.L, end.map.R=end.CI.R, method))
+    } else { 
+      csm <- smlcsm
+    }
+
+    x <- filter(csm, 
                 chr == input$seg.chr & 
                   end.map > input$seg.start-input$pad & 
                   start.map < input$seg.end+input$pad & 
@@ -574,7 +601,7 @@ shinyServer(function(input, output, session) {
     ggplot(x, aes(x=.id, y=start.map, ymin=start.map.L, ymax=start.map.R, color=target))+geom_pointrange(size=1.5) + 
       geom_pointrange(aes(y=end.map, ymin=end.map.L, ymax=end.map.R), size=1.5) +
       geom_segment(aes(y=start.map, yend=end.map, xend=.id), size=1.5, linetype=3) +
-      theme(axis.title.x = element_blank(), axis.title.y=element_blank(), plot.margin=unit(c(0,1,0,0),'inches')) + guides(color='none') + ylims() + coord_flip()
+      theme(axis.title.x = element_blank(), axis.title.y=element_blank(), plot.margin=unit(c(0,.75,0,0.1),'inches')) + guides(color='none') + ylims() + coord_flip() + facet_grid(method~.)
   })
   
   winGenoPlot <- reactive({
@@ -671,6 +698,24 @@ shinyServer(function(input, output, session) {
     }
   })
   
+  bayesPriorPlot <- reactive({
+    cat("bayesPriorPlot...\n")
+    # retrieve prior from database
+    
+    priors <- dbGetQuery(db$con, sprintf("SELECT p.region_id, p.start_pos, p.\"loss.u\", p.\"gain.u\", pr.side FROM prior p, prior_region pr, profile_segment ps1, profile_segment ps2 WHERE p.region_id=pr.id AND pr.chr=ps1.chrom AND pr.binL>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND pr.chr=ps2.chrom AND pr.binR<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s", input$seg.chr, input$seg.start-input$pad, input$seg.start-input$pad, input$seg.chr, input$seg.end+input$pad, input$seg.end+input$pad))
+    priors.m <- melt(priors, c('start_pos','side'), c('loss.u','gain.u'))
+    ggplot(priors.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(side~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.4),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+  })
+  
+  posteriorPlot <- reactive({
+    cat("posteriorPlot...\n")
+    
+    posterior <- dbGetQuery(db$con, sprintf("SELECT po.start_pos, po.sample, po.\"loss.u\", po.\"gain.u\", po.loss, po.gain, po.bayes_loss, po.bayes_gain FROM posterior_dist po, profile_segment ps1, profile_segment ps2 WHERE po.chr=ps1.chrom AND po.bin>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND po.chr=ps2.chrom AND po.bin<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s AND po.sample IN ('%s')", input$seg.chr, input$seg.start-input$pad, input$seg.start-input$pad, input$seg.chr, input$seg.end+input$pad, input$seg.end+input$pad, paste(input$seg.sample,collapse="','")))
+    posterior.m <- mutate(melt(posterior, c('start_pos','sample'), c('loss','gain','bayes_loss','bayes_gain')),
+                          kind=ifelse(grepl('bayes_',variable),'Bayes','Likelihood'))
+    ggplot(posterior.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(kind+sample~.,scales="free_y") + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.6,0,0),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+  })
+  
   bkptPlot <- reactive({
     cat("bkptPlot...\n")
     bkpt.prior <- bkptPriors()
@@ -679,7 +724,7 @@ shinyServer(function(input, output, session) {
                            kind=ifelse(grepl('_ratio', variable), 'Log Ratio', ifelse(grepl('_ll',variable),'Broken Log Likelihood','Log No Loss/Gain')))
 
     ggplot(bkpt.prior.m, 
-           aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + facet_grid(kind~.,scales='free_y')+ theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()  
+           aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + facet_grid(kind~.,scales='free_y')+ theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.4),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()  
   })
   
   eachBkptPlot <- reactive({
@@ -687,9 +732,8 @@ shinyServer(function(input, output, session) {
     bkpts <- bkpts.ll()
     if (nrow(bkpts)>0) {
       
-      bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss_ll','gain_ll','Lno_lossZ','Lno_gainZ')) 
-      bkpts <- mutate(bkpts, kind=ifelse(grepl('Z',variable),'Z',ifelse(grepl('no_',variable),'No','')))
-      ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample+kind~.,scales="free_y") + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob") + xbounds()
+      bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss','gain')) 
+      ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.25),'in'),legend.position="bottom") + ylab("Prob") + xbounds()
     } else {
       ggplot() + geom_blank()
     }
@@ -702,7 +746,8 @@ shinyServer(function(input, output, session) {
     wg.df <- winGeno()
     
     # fix to use common column names
-    oer.df <- rename(oer.df, start=left, end=right)
+    print(head(oer.df))
+    oer.df <- dplyr::rename(oer.df, start=left, end=right)
     
     oer.wg <- left_join(subset(oer.df, sample.type != 'median'), wg.df, by=c('start','end','sample'))
     oer.wg$cn <- as.numeric(as.character(oer.wg$cn))
@@ -737,8 +782,10 @@ shinyServer(function(input, output, session) {
     if (input$show_CI) { plots$CI = cnvCIPlot() }
     if (input$show_frag) { if (input$color_frag) { plots$frag=genoFragPlot() } else { plots$frag = fragPlot() } }
     if (input$show_winGeno) { plots$winGeno = winGenoPlot() }
-    if (input$show_prior) { plots$prior = bkptPlot() }
+#    if (input$show_prior) { plots$prior = bkptPlot() }
     if (input$show_each_bkpt) { plots$bkpt = eachBkptPlot() }
+    if (input$show_bayes_prior) { plots$bayes.prior = bayesPriorPlot() }
+    if (input$show_posterior) { plots$posterior = posteriorPlot() }
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
   })
   

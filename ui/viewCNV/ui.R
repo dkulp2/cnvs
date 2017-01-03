@@ -58,7 +58,9 @@ shinyUI(fluidPage(
                          tags$td(checkboxInput("show_frag","Fragment Profiles", value=TRUE)),
                          tags$td(checkboxInput("show_readPairs","Read Pair Counts", value=FALSE)),
                          tags$td(checkboxInput("show_expected","Expected Depth", value=FALSE))),
-                 tags$tr(tags$td(checkboxInput("show_prior","Loss/Gain Prior", value=TRUE)),
+                 tags$tr(#tags$td(checkboxInput("show_prior","Loss/Gain Pseudo-Prior", value=FALSE)),
+                         tags$td(checkboxInput("show_posterior","Likelihood & Posterior", value=TRUE)),
+                         tags$td(checkboxInput("show_bayes_prior","Mean Prior", value=TRUE)),
                          tags$td(checkboxInput("show_each_bkpt","Loss/Gain By Sample", value=FALSE)),
                          tags$td(checkboxInput("show_CI","Conf Intervals", value=TRUE)),
                          tags$td(checkboxInput("color_frag", "Color Fragments by Copy Number", value=TRUE)))),
@@ -75,6 +77,7 @@ shinyUI(fluidPage(
                        checkboxInput("show_wildtype","Show WildType (CN=2) Extents", value=FALSE),
                        checkboxInput("show_basic","Show Basic Extents", value=TRUE),
                        checkboxInput("show_extended_ML", "Show Maximum Likelihood Bounds", value=FALSE),
+                       checkboxInput("show_bayes", "Show Bayes Adjusted Bounds", value=TRUE),
                        sliderInput("min.cnv.len", "Minimum Length of Displayed CNV Extents", min=0, value=100, max=5000, step=100)),
       sliderInput("paired.reads","Minimum Number of Paired Reads", min=0, max=10, value=0, step=1)
     ),
