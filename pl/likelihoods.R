@@ -68,19 +68,19 @@ win.size.bins <- first(which(cumsum(bin.map$elength)>=win.size)) # set window si
 
 half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
 
+cat("Counting samples in profile_counts")
 samples <- dbGetQuery(db$con, "select distinct sample from profile_counts")
+#samples <- data.frame(sample=c('08C79660','09C100176'), stringsAsFactors = FALSE)
 cat(sprintf("Processing %s samples\n", nrow(samples)))
-#samples <- c('08C79660','09C100176')
 
 sapply(samples$sample, function(sample) {
   cat(sample,"\n")
   
   # FIXME: operate per chromosome
-  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s' order by bin", sample))
+  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s' order by chrom, bin", sample))
   
   cn.vals <- c(0.1,1:3)
-  selected.bins <- all.profiles$bin[row.idx]
-  
+
   exp.cn <- llply(cn.vals, function(cn) {
     rollapply(all.profiles$expected*cn, half.win, sum)
   })
@@ -99,8 +99,9 @@ sapply(samples$sample, function(sample) {
   
   # flatten pois.cnL and pois.cnR into a single data.frame
   # bin is the leftmost bin of cnL
-  pois.cn.df <- cbind(data.frame(label=data.label, sample=sample, 
-                                 bin=all.profiles$bin[1:(nrow(all.profiles)-(half.win-1)-half.win)]), 
+  pois.cn.df <- cbind(mutate(data.frame(label=data.label, sample=sample, 
+                                        bin=all.profiles$bin[1:(nrow(all.profiles)-(half.win-1)-half.win)]),
+                             chr=bin.map$chrom[bin]), 
                       do.call(data.frame, pois.cnL), do.call(data.frame, pois.cnR))
   
   # remove any results from a previous run and write to DB
@@ -111,7 +112,8 @@ sapply(samples$sample, function(sample) {
   }
   dbWriteTable(db$con, "pois", pois.cn.df, append=TRUE, row.names = FALSE)
   if (!pois.exists) {  # new table
-    dbGetQuery(db$con, "CREATE INDEX ON pois(sample,bin)")
+    dbGetQuery(db$con, "CREATE UNIQUE INDEX ON pois(label,sample,chr,bin)")
+    dbGetQuery(db$con, "ALTER TABLE pois ADD FOREIGN KEY(chr,bin) REFERENCES profile_segment(chrom,bin)")
   }
   
   # sum over the probability of each pair of indices in idx, e.g. for gain1.idx:
@@ -138,7 +140,7 @@ sapply(samples$sample, function(sample) {
   no.bkpt.ll <- sumprob(nochange.idx)
   
   bkpt.bin <- bin.map$bin[1:length(no.bkpt.ll)+half.win]
-  bkpt.df <- filter(data.frame(sample=sample, chr=df$chr[1], bkpt_bin=bkpt.bin, gain_ll=bkpt.gain.ll, 
+  bkpt.df <- filter(data.frame(label=data.label, sample=sample, chr=all.profiles$chrom[1], bkpt_bin=bkpt.bin, gain_ll=bkpt.gain.ll, 
                                gain1_ll=bkpt.gain1.ll, loss_ll=bkpt.loss.ll, loss1_ll=bkpt.loss1.ll,
                                any_ll=bkpt.any.ll, no_bkpt_ll=no.bkpt.ll),
                     abs(bkpt.loss.ll)<Inf & abs(bkpt.gain.ll)<Inf & abs(no.bkpt.ll)<Inf)
