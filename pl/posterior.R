@@ -50,7 +50,7 @@ fetch.prior <- function(label, chr, pos, change) {
 
 # calculate the CI by growing greadily away from max. 
 conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
-  p < p / sum(p)  # make a density
+  p <- p / sum(p)  # make a density
   best.pos <- which.max(p)
   i <- best.pos - 1
   j <- best.pos + 1
@@ -193,7 +193,6 @@ if (dbExistsTable(db$con, "posterior_dist")) {
 }
 
 # for each predicted CNV, compute a new normalized density for each breakpoint based on the joint probability of the likelihood and prior.
-# I'm using the loss or gain ratio as a density function.
 #pv <- profvis({
   res <-
     ddply(filter(cnvs, cn!=2), .(label), function(df) {
