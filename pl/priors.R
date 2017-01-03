@@ -19,7 +19,7 @@ library(caroline)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
+cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -47,41 +47,37 @@ mk.prior <- function(chr, x1, x2, samples, label) {
                                       chr, x2, x1, samples, label))
   stopifnot(nrow(bkpts)>0)
 
-  # first normalize, then compute NOT probs
+  # Retrieve pois likelihoods for each sample and position.
   bkpts <- mutate(bkpts,
                   loss = 10^-loss_ll,
                   gain = 10^-gain_ll,
-                  nc = 10^-no_bkpt_ll,
-                  tot=loss+gain+nc,
-                  lossZ = loss/tot,
-                  gainZ = gain/tot,
-                  ncZ = nc/tot,
-                  Lloss = -log10(lossZ),
-                  Lgain = -log10(gainZ),
-                  Lnc = -log10(ncZ),
-                  Lno_loss=-log10(1-lossZ),
-                  Lno_gain=-log10(1-gainZ)
-  )
+                  nc = 10^-no_bkpt_ll)
   
+  # assume that loss (or gain) definitely occurs somewhere in x1..x2 window for each sample.
+  # assume that p(loss_i|x_j) ~ p(x_j|loss_i)p(loss_i) where p(loss_i) is uniform.
+  # so normalize the likelihoods per sample to obtain p(loss_i|x_j), i.e. p(loss|x_j)=1.
+  bkpts <- ddply(bkpts, .(sample), mutate,
+                  lossZ = loss/sum(loss),
+                  gainZ = gain/sum(gain),
+                  ncZ = nc/sum(nc)
+  )
+
+  # assume that each p(loss|x_j) has equal wait. TODO: add call confidence per sample  
   bkpt.prior <- mutate(ddply(bkpts, .(bin,start_pos), summarize,
-                             Lall_no_loss=sum(Lno_loss),
-                             Lall_no_gain=sum(Lno_gain),
-                             Lall_nc=sum(Lnc),
-                             some_loss=1-10^(-Lall_no_loss), 
-                             some_gain=1-10^(-Lall_no_gain),
-                             some_nc=1-10^(-Lall_nc),
-                             Lsome_loss=-log10(some_loss), 
-                             Lsome_gain=-log10(some_gain),
-                             Lsome_nc=-log10(some_nc)))
+                             loss.u=mean(lossZ),
+                             gain.u=mean(gainZ),
+                             nc.u=mean(ncZ)),
+                       Lloss.u=-log(loss.u),
+                       Lgain.u=-log(gain.u),
+                       Lnc.u=-log(nc.u))
   
 }
 
 plot.prior <- function(bkpt.prior) {
-  bkpt.prior.m <- mutate(melt(bkpt.prior, 'start_pos', c('Lall_no_loss','Lall_no_gain')),
-                         kind=ifelse(grepl('_ratio', variable), 'Log Ratio', ifelse(grepl('_ll',variable),'Broken Log Likelihood','Log No Loss/Gain')))
-  
+  bkpt.prior.m <- melt(bkpt.prior, 'start_pos', c('loss.u','gain.u'))
+                  
   ggplot(bkpt.prior.m, 
-         aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + facet_grid(kind~.,scales='free_y')+ theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob")  
+         aes(x=start_pos, y=value, color=variable))+geom_point()+geom_line() + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.6),'in'),legend.position="bottom") + ylab("Log Prob")  
   
 }
 
