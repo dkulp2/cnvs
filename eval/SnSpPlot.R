@@ -3,6 +3,7 @@ library(dplyr)
 library(ggplot2)
 
 db <- src_postgres(dbname='seq', host='localhost', port=5432, user='postgres')
+dbSendQuery(db$con, "SET search_path TO eval")
 
 thresh.intvls <- c(0,0.00001,seq(0.1,0.9,0.1),0.99999,1)
 less.or.equal <- function(a,b) { a <= b }

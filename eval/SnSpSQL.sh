@@ -13,6 +13,9 @@ source ${THISDIR}/../conf/site.conf
 source ${THISDIR}/../conf/cnv.conf
 
 psql -a <<EOF
+CREATE SCHEMA eval;
+SET search_path TO eval;
+
 DROP TABLE IF EXISTS KNOWN_CNVS;
 CREATE TABLE IF NOT EXISTS KNOWN_CNVS (
        SAMPLE	     varchar(30),
@@ -54,11 +57,24 @@ DELETE FROM PRED_CNVS;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SAMPLESEG' FROM PRED_CNVS;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SAMPLESEGSP' FROM PRED_CNVS;
 
+-- ".bayesCI" are basic predictions, extended by "staircase" and MLE, and adjusted using a
+-- bayesian approach to incorporate priors.
+DELETE FROM PRED_CNVS;
+\COPY PRED_CNVS FROM '${workDir}/sites_cnv_segs.txt.bayesCI.tbl' DELIMITER E'\t' CSV NULL 'NA';
+INSERT INTO ALL_PRED_CNVS SELECT *, 'BAYES','SAMPLESEG' FROM PRED_CNVS;
+INSERT INTO ALL_PRED_CNVS SELECT *, 'BAYES','SAMPLESEGSP' FROM PRED_CNVS;
+
 -- ".flt" is a flattened ".sml" for site-level analysis
 DELETE FROM PRED_CNVS;
 \COPY PRED_CNVS FROM '${workDir}/sites_cnv_segs.txt.flt.tbl' DELIMITER E'\t' CSV;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SITE' FROM PRED_CNVS;
 INSERT INTO ALL_PRED_CNVS SELECT *, 'SML','SITESP' FROM PRED_CNVS;
+
+-- ".bayesflt" is a flattened "bayes" for site-level analysis
+DELETE FROM PRED_CNVS;
+\COPY PRED_CNVS FROM '${workDir}/sites_cnv_segs.txt.bayesflt.tbl' DELIMITER E'\t' CSV;
+INSERT INTO ALL_PRED_CNVS SELECT *, 'BAYES','SITE' FROM PRED_CNVS;
+INSERT INTO ALL_PRED_CNVS SELECT *, 'BAYES','SITESP' FROM PRED_CNVS;
 
 -- \COPY PRED_CNVS FROM '/cygdrive/d/mccarroll/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.ml.tbl' DELIMITER E'\t' CSV;
 -- \COPY PRED_CNVS FROM '/cygdrive/d/mccarroll/cnv_seg.B12.L500.Q13.2/sites_cnv_segs.txt.ml.tbl' DELIMITER E'\t' CSV;
@@ -111,7 +127,7 @@ SELECT k.SAMPLE AS k_SAMPLE, k.SOURCE as k_SOURCE, p.SAMPLE AS p_SAMPLE, p.SOURC
        k.START_POS BETWEEN p.START_CIL AND p.START_CIR AS START_IN_CIL,
        k.END_POS BETWEEN p.END_CIL AND p.END_CIR AS END_IN_CIL
   INTO OVERLAP
-  FROM ALL_KNOWN_CNVS k FULL OUTER JOIN (SELECT * FROM ALL_PRED_CNVS WHERE START_POS < END_POS) AS p ON 
+  FROM ALL_KNOWN_CNVS k FULL OUTER JOIN (SELECT * FROM ALL_PRED_CNVS WHERE START_POS < END_POS AND source='BAYES') AS p ON 
        (k.SAMPLE = p.SAMPLE AND
         k.CHROM = p.CHROM AND
 	k.START_POS < p.END_POS AND
