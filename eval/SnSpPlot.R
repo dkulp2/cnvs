@@ -151,6 +151,31 @@ k.ss$inCI <- with(k.ss, ifelse(start_in_cil, ifelse(end_in_cil, 'Both', 'Only St
 ggplot(na.omit(k.ss), aes(x=start_offset, y=end_offset, color=inCI)) + geom_point() + facet_wrap(~inCI) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets and Confidence Intervals\nfor predictions with 75% overlap to knowns') + lims(x=c(-1000,1000),y=c(-1000,1000)) + geom_hline(yintercept=0) + geom_vline(xintercept = 0)
 ggplot(filter(na.omit(k.ss),inCI!='Both'), aes(y=-start_offset, x=-end_offset, color=inCI)) + geom_point() + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle('Boundary Offsets and Confidence Intervals\nfor predictions with 75% overlap to knowns') + lims(x=c(-1000,1000),y=c(-1000,1000)) + geom_hline(yintercept=0) + geom_vline(xintercept = 0)
 
-#ovlp4 <- db %>% tbl('overlap') %>% filter(k_kind=='SAMPLESEGSP' && p_kind=='SAMPLESEGSP') %>% collect
-#ggplot(ovlp4, aes(x=start_offset, y=end_offset,size=known_len)) + geom_point(alpha=0.20) + xlab('Offset from True Start') + ylab('Offset from True End') + ggtitle("Boundary Offsets\nPredictions that Overlap Any GStrip CNV") + geom_vline(xintercept=0) + geom_hline(yintercept=0) + xlim(-10000,10000) + ylim(-10000,10000) # + geom_density_2d()
+
+# Group the edge stats by site
+k.sites <- db %>% tbl('all_known_cnvs') %>% filter(kind=='SITE' & source=='GS_DELS') %>% collect
+
+# Split out known sites with a separate row per ID
+k.sites.ids <- ddply(k.sites, .(id), function(df) return(data.frame(geno=df$geno, ids=unique(unlist(strsplit(df$id, ';'))),stringsAsFactors = FALSE)))
+k.sites2 <- inner_join(k.sites, k.sites.ids, by=c('id','geno'))
+
+# Use a single ID for prediction
+ovlp4 <- ddply(ovlp3, .(k_id), mutate, k_id.first=first(unlist(strsplit(k_id, ';'))))  # choose first of N DEL IDs to join with ids in site
+
+# one row for each site and sampleseg pair 
+site.join.ovlp <- mutate(inner_join(k.sites2, ovlp4, by=c("ids"="k_id.first","geno"="k_geno")),
+                         start.offset=start_pos.y-start_pos.x,
+                         end.offset=end_pos.y-end_pos.x)
+
+# for each site, compute stats on offset
+site.offset.stats <- ddply(site.join.ovlp, .(id), summarize, 
+                           start.offset.med=median(start.offset), 
+                           start.offset.100=sum(abs(start.offset-start.offset.med)<=100),
+                           start.offset.200=sum(abs(start.offset-start.offset.med)<=200),
+                           n=length(id),
+                           so.100.frac=start.offset.100/n,
+                           so.200.frac=start.offset.200/n)
+
+
+
 
