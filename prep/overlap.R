@@ -135,24 +135,31 @@ read_known_file <- function(fn) {
   return(as.tbl(gdo))  
 } 
 
+gsdel.dir <- dirname(Sys.getenv(gsdelFile))
+gsdel.base <- sub('.vcf.gz','.txt',basename(Sys.getenv(gsdelFile)))
+
 # create a flattened set of DELs with paired.reads > 0, CQ>13, no conflict CNs
-gstrip_dels <- read_known_file("/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
+#gstrip_dels <- read_known_file("/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
 #gstrip_dels <- read_known_file("C:/cygwin64/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
+gstrip_dels <- read_known_file(sprintf("%s/%s",gsdel.dir,gsdel.base))
 
 ret <- flattenFile(gstrip_dels,
-                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_flt.genotypes.txt",
-                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_xflt.genotypes.txt",
+                   sprintf("%s/gs_dels_flt.genotypes.txt", gsdel.dir),
+                   sprintf("%s/gs_dels_xflt.genotypes.txt", gsdel.dir),
                    restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE)
 
 ret <- flattenFile(gstrip_dels,
-                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_best.genotypes.txt",
+                   sprintf("%s/gs_dels_best.genotypes.txt",gsdel.dir),
                    "/dev/null",
                    restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE, choose.best=TRUE)
 
-gstrip_cnv_del <- rbind(gstrip_dels, read_known_file("/home/dkulp/data/gpc_wave2/gs_cnv.genotypes.txt"))
+gscnv.dir <- dirname(Sys.getenv(gscnvFile))
+gscnv.base <- sub('.vcf.gz','.txt',basename(Sys.getenv(gscnvFile)))
+
+gstrip_cnv_del <- rbind(gstrip_dels, read_known_file(sprintf("%s/%s", gsdel.dir, gsdel.base)))
 ret <- flattenFile(gstrip_cnv_del,
-                   "/home/dkulp/data/gpc_wave2/gs_cnv_del_flt.genotypes.txt",
-                   "/home/dkulp/data/gpc_wave2/gs_cnv_del_xflt.genotypes.txt",
+                   sprintf("%s/gs_cnv_del_flt.genotypes.txt", gscnv.dir),
+                   sprintf("%s/gs_cnv_del_xflt.genotypes.txt",gscnv.dir),
                    remove.discordant.cn = FALSE)
 
 
