@@ -174,8 +174,13 @@ site.offset.stats <- ddply(site.join.ovlp, .(id), summarize,
                            start.offset.200=sum(abs(start.offset-start.offset.med)<=200),
                            n=length(id),
                            so.100.frac=start.offset.100/n,
-                           so.200.frac=start.offset.200/n)
+                           so.200.frac=start.offset.200/n,
+                           so.100.out=n-start.offset.100,
+                           so.200.out=n-start.offset.200)
 
+hist(site.offset.stats$so.100.out, breaks=seq(0,15),xlab='Samples',ylab='Sites',main=sprintf('Histogram of number of samples\nwith breakpoint further than 1 bin\nfrom median breakpoint\n(site count=%s)',nrow(site.offset.stats)))
+hist(site.offset.stats$so.200.out, breaks=seq(0,10),xlab='Samples',ylab='Sites',main=sprintf('Histogram of number of samples\nwith breakpoint further than 2 bin\nfrom median breakpoint\n(site count=%s)',nrow(site.offset.stats)))
 
-
+plot(site.offset.stats$so.100.frac)
+plot(density(site.offset.stats$so.100.frac),main="Density of Fraction of Samples within 1 Bin")
 
