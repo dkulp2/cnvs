@@ -25,9 +25,14 @@ irs.fn <- paste0(data.dir,"/cnv_segs.irs")
 probe.fn <- paste0(data.dir,"/probes.txt")
 
 # KNOWNS
-#gs_dels.fn <- paste0(data.dir,"/gs_dels.txt")
+
+# DEL pipeline only for Sn
 gs_dels.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
-# NOT USED: gs_cnvs.fn <- paste0(data.dir,"../gpc_wave2/gs_cnv.genotypes.txt")
+
+# DEL pipeline — only sampleseg with most readpair evidence
+gs_dels_best.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_best.genotypes.txt") # filtered, highest read pair
+
+# More generous set for Sp
 gs_cnvdels_flat.fn <- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
 
 cnv.geno.fn <- paste0(data.dir,"/sites_cnv_segs.txt.cnvgeno.srt.gz")
@@ -106,6 +111,8 @@ shinyServer(function(input, output, session) {
   gs.dels.orig <- reactive({
     if (input$truth_data == 'GStrip Sn DEL Data') {
       gdo.fn <- gs_dels.fn
+    } else if (input$truth_data == 'GStrip Sn Best DEL Data') {
+      gdo.fn <- gs_dels_best.fn
     } else {
       gdo.fn <- gs_cnvdels_flat.fn
     }

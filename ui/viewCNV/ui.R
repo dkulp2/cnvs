@@ -49,7 +49,7 @@ shinyUI(fluidPage(
                  tags$td(actionButton("zoom.out", "Zoom Out"))),
       selectizeInput("seg.sample", "Samples", choices=list(), multiple=TRUE),
       textareaInput("note","Note (first line is title)", "", rows = 3),
-      selectInput("truth_data", "Truth Data Set", choices=list('GStrip Sn DEL Data', 'CNV Pipeline Sp Data'), selected='Gstrip Sn DEL Data'), #selected='CNV Pipeline Sp Data'),
+      selectInput("truth_data", "Truth Data Set", choices=list('GStrip Sn DEL Data', 'GStrip Sn Best DEL Data', 'CNV Pipeline Sp Data'), selected='Gstrip Sn DEL Data'), #selected='CNV Pipeline Sp Data'),
 #      checkboxInput("show_CN", "Color Segments by Copy Number", value=TRUE),
       selectInput("bkpt_prior_samples", "Samples Prior", choices=list('All','Selected','Exclude Selected'), selected='All'),
       selectInput("bkpt_prior_CN", "CN Prior", choices=list('Any','0 or 1','0','1'), selected='0 or 1'),
