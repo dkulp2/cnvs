@@ -18,8 +18,11 @@ library(pryr)
 # overlap - takes a data.frame (df) and returns a data.frame with all overlapping regions collapsed into one with the seg
 # column concatenated together.
 # The return data.frame also includes summary information for the collapsed sets, i.e. min/max CN, min/max CNQ, min/max paired read count,
-#   the maximal difference of left and right bounds, whether or not there is more than on CN, and the number of segments merged.
-overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', cq='cq', seg='seg', paired.reads='paired.reads') {
+#   the maximal difference of left and right bounds, whether or not there is more than one CN, and the number of segments merged.
+# choose.best==FALSE: collapse all overlapping samplesegs into a maximal region
+# choose.best==TRUE: return the sampleseg with the highest paired.read evidence
+overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', cq='cq', seg='seg', paired.reads='paired.reads',
+                    choose.best=FALSE) {
   if (nrow(df)==1) {
     return(data.frame(i=1,j=1,start.map=df[[start.name]],end.map=df[[end.name]],
                       x.min=df[[start.name]], x.max=df[[start.name]],
@@ -52,9 +55,10 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
   
   df.merged <- data.frame(i=i, j=j, starts, ends)
   names(df.merged) <- c('i','j', start.name, end.name)
-  
-  df.merge <- function(x, i, j) {
-    mutate(x, i, j, x.min=min(df2[[eval(start.name,parent.frame(2))]][i:j]), 
+
+  df.merge <- function(x) {
+    mutate(x, i, j, 
+           x.min=min(df2[[eval(start.name,parent.frame(2))]][i:j]), 
            x.max=max(df2[[eval(start.name,parent.frame(2))]][i:j]),
            y.min=min(df2[[end.name]][i:j]), y.max=max(df2[[end.name]][i:j]),
            x.diff=x.max-x.min, y.diff=y.max-y.min,
@@ -67,6 +71,15 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
   }
   df.merged <- ddply(df.merged, .(i,j), df.merge)
   
+  # if choose.best, then set start.map and end.map to the bounds of the sampleseg with the highest read pair evidence
+  if (choose.best) {
+
+    df.merged <- ddply(df.merged, .(i,j), mutate,
+                       k=(i:j)[which.max(df2[[paired.reads]][i:j])],
+                       start.map=df2[[start.name]][k],
+                       end.map=df2[[end.name]][k])
+
+  }
   return(df.merged)
   
 }
@@ -74,7 +87,7 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
 # flattenFile takes a data.frame and performs sampleseg and site overlap, writing the results to the designated output files.
 # restrict: an expression that is applied to the data.frame. (Could be applied before call now, but cool example on how to pass unevaluated R) 
 # remove.discordant.cn: if TRUE skips any overlap sets that have different CN values
-flattenFile <- function(df, sampleseg.fn, site.fn, restrict=expression(TRUE), remove.discordant.cn=TRUE) {
+flattenFile <- function(df, sampleseg.fn, site.fn, restrict=expression(TRUE), remove.discordant.cn=TRUE, choose.best=FALSE) {
   
   # gs.dels.flt <- ddply(gdo, .(.id), overlap)
   # gs.dels.flt0 <- ddply(subset(gdo, paired.reads > 0), .(.id), overlap)
@@ -82,13 +95,17 @@ flattenFile <- function(df, sampleseg.fn, site.fn, restrict=expression(TRUE), re
   # gs.dels.flt3 <- overlap(gdo)
   
   gs.dels.flt4 <- ddply(df, .(chr), function(gdo.chr) {
-    a <- ddply(subset(gdo.chr, eval(restrict)), .(.id), overlap)
+    a <- ddply(subset(gdo.chr, eval(restrict)), .(.id), overlap, choose.best=choose.best)
     if (remove.discordant.cn) { subset(a, one.cn) } else { a }
   })
   
   gs.dels.flt4$cn <- ifelse(gs.dels.flt4$one.cn, gs.dels.flt4$cn.min, 99) # hack: mark collapsed CN column as discordant
   gs.dels.flt4$cq <- gs.dels.flt4$cq.min
-  gs.dels.flt4$paired.reads <- gs.dels.flt4$paired.reads.min
+  if (choose.best) { 
+    gs.dels.flt4$paired.reads <- gs.dels.flt4$paired.reads.max
+  } else {
+    gs.dels.flt4$paired.reads <- gs.dels.flt4$paired.reads.min
+  }
   write.table(gs.dels.flt4[,c('.id','seg', 'chr', 'start.map', 'end.map', 'cn', 'cq', 'paired.reads')], 
               file=sampleseg.fn,
               col.names=c('SAMPLE','ID','CHROM','START','END','GT','GQ', 'READCOUNT'), row.names=FALSE,
@@ -120,10 +137,17 @@ read_known_file <- function(fn) {
 
 # create a flattened set of DELs with paired.reads > 0, CQ>13, no conflict CNs
 gstrip_dels <- read_known_file("/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
+#gstrip_dels <- read_known_file("C:/cygwin64/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
+
 ret <- flattenFile(gstrip_dels,
                    "/home/dkulp/data/gpc_wave2_batch1/gs_dels_flt.genotypes.txt",
                    "/home/dkulp/data/gpc_wave2_batch1/gs_dels_xflt.genotypes.txt",
                    restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE)
+
+ret <- flattenFile(gstrip_dels,
+                   "/home/dkulp/data/gpc_wave2_batch1/gs_dels_best.genotypes.txt",
+                   "/dev/null",
+                   restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE, choose.best=TRUE)
 
 gstrip_cnv_del <- rbind(gstrip_dels, read_known_file("/home/dkulp/data/gpc_wave2/gs_cnv.genotypes.txt"))
 ret <- flattenFile(gstrip_cnv_del,
