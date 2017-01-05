@@ -217,6 +217,7 @@ dbCommit(db$con)
 dbSendQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
+if (dbExistsTable(db$con, "cnvs")) { dbSendQuery(db$con, "DROP TABLE cnvs") }
 dbWriteTable(db$con, "cnvs", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.best.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.best.bin","end.binCI.L","end.binCI.R")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
