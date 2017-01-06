@@ -1,0 +1,22 @@
+#!/bin/bash
+#
+# Usage: sql file.sql
+#
+# Executes the SQL statements. Uses the local configuration for database connections
+# and performs any environment variable substitutions in file.sql.
+
+set -eu
+
+THISDIR=`dirname $0`
+export PATH=${THISDIR}/../util:$PATH
+
+# set ROOT and primary data sources
+source ${THISDIR}/../conf/site.conf
+
+# set params for this run
+source ${THISDIR}/../conf/cnv.conf
+
+eval "psql -a <<EOF
+$(<$1)
+EOF
+"
