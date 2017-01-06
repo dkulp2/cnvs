@@ -17,6 +17,12 @@ source ${THISDIR}/../conf/site.conf
 # set params for this run
 source ${THISDIR}/../conf/cnv.conf
 
+# LABEL refers to this data set. It's used to mark results in the database.
+# TBD: generalize this for test/train. Currently this is incestuous.
+LABEL=$(basename $(dirname $profileFile))
+INT_LABEL=${LABEL}  # label for internal (test) prior
+EXT_LABEL=${LABEL}  # label for external prior
+
 # Java stuff
 export WSP_DIR=${ROOT}/SVToolkit_Kulp
 export SV_DIR=`cygpath.shim -w ${WSP_DIR}/release/svtoolkit`  # passed to GATK
@@ -29,8 +35,11 @@ ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
 VCF2TAB=${UTILS}/vcf2tab
 GSDEL2TAB=${UTILS}/gs_del2tab
 MERGE_CNV=${SCRIPTS}/merge_cnv.R
+LIKELIHOODS=${SCRIPTS}/likelihoods.R
 STAIRCASE=${SCRIPTS}/staircase.R
 COLLAPSE=${SCRIPTS}/collapse.R
+PRIORS=${SCRIPTS}/priors.R
+POSTERIOR=${SCRIPTS}/posterior.R
 
 
 # input and output files
@@ -103,16 +112,19 @@ zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
 # basic CNV prediction
 time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
 
-# filter and adjust
-time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} 1>&2
+# generate poisson probs
+time Rscript ${LIKELIHOODS} ${OUT1_VCF}.txt ${DBCONN} ${MLE_WINSIZE} ${LABEL}
 
-# generate a collapse "site" set
+# filter and adjust
+time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} ${LABEL} 1>&2
+
+# generate a collapse "site" set => smlx2csm
 time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm ${BP_DIST}
 
-# infer a distribution for each site of bounds
-#time Rscript ${BOUNDS} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm ${DBCONN}
+# generate prior distros
+time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${DBCONN} ${LABEL} ${MLE_WINSIZE}
 
-#time Rscript ${MERGE_CNV} ${OUT1_VCF_HIRES}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE2} 1>&2
+time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${DBCONN} ${TEST_LABEL} ${EXTERNAL_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
 
 # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
 sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
