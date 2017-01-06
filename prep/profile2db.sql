@@ -20,8 +20,8 @@ CREATE TABLE profile_counts (
        FOREIGN KEY (CHROM,BIN) REFERENCES profile_segment(CHROM,BIN)
 );
 
-\copy profile_segment FROM PROGRAM 'zcat /home/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.seg.txt.gz' DELIMITER E'\t' CSV
-\copy profile_counts FROM PROGRAM 'zcat /home/dkulp/data/gpc_wave2_batch1/profile_seq_20_100.pro.txt.gz' DELIMITER E'\t' CSV
+\copy profile_segment FROM PROGRAM 'zcat ${profileFile%%.dat.gz}.seg.txt.gz' DELIMITER E'\t' CSV
+\copy profile_counts FROM PROGRAM 'zcat ${profileFile%%.dat.gz}.pro.txt.gz' DELIMITER E'\t' CSV
 
 CREATE INDEX ON profile_segment(chrom,start_pos);
 CREATE INDEX ON profile_segment(chrom,end_pos);
