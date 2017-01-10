@@ -20,7 +20,7 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','.7', '1000')
+# cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','.7', '1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
