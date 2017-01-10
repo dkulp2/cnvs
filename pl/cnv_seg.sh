@@ -23,11 +23,6 @@ LABEL=$(basename $(dirname $profileFile))
 INT_LABEL=${LABEL}  # label for internal (test) prior
 EXT_LABEL=${LABEL}  # label for external prior
 
-# Java stuff
-export WSP_DIR=${ROOT}/SVToolkit_Kulp
-export SV_DIR=`cygpath.shim -w ${WSP_DIR}/release/svtoolkit`  # passed to GATK
-export SV_CLASSPATH=${WSP_DIR}/dist/SVToolkit-private.jar:${WSP_DIR}/public/dist/SVToolkit.jar:${WSP_DIR}/public/release/svtoolkit/lib/gatk/GenomeAnalysisTK.jar
-
 # auxiliary scripts
 SCRIPTS=${THISDIR}
 UTILS=${THISDIR}/../util
