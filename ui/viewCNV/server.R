@@ -383,9 +383,13 @@ shinyServer(function(input, output, session) {
     
     disp.cols <- c('.id','cn','copy.number','chr','start.map','end.map','seg', 'target', 'evidence')
     gs.del.sel <- gs.dels[,c(disp.cols,'paired.reads')] 
-    cn.segs.sel <- cn.segs[,disp.cols]
-    if (nrow(cn.segs.sel)>0) { cn.segs.sel$paired.reads <- NA }
-    disp <- rbind(gs.del.sel, cn.segs.sel)
+    if (nrow(cn.segs) > 0) {
+      cn.segs.sel <- cn.segs[,disp.cols]
+      cn.segs.sel$paired.reads <- NA      
+      disp <- rbind(gs.del.sel, cn.segs.sel)
+    } else {
+      disp <- gs.del.sel
+    }
     
     if (nrow(probes) > 0 && FALSE) {  # remove probes 
       disp2 <- rbind(disp, 
@@ -710,17 +714,26 @@ shinyServer(function(input, output, session) {
     # retrieve prior from database
     
     priors <- dbGetQuery(db$con, sprintf("SELECT p.region_id, p.start_pos, p.\"loss.u\", p.\"gain.u\", pr.side FROM prior p, prior_region pr, profile_segment ps1, profile_segment ps2 WHERE p.region_id=pr.id AND pr.chr=ps1.chrom AND pr.binL>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND pr.chr=ps2.chrom AND pr.binR<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s", input$seg.chr, input$seg.start-input$pad, input$seg.start-input$pad, input$seg.chr, input$seg.end+input$pad, input$seg.end+input$pad))
-    priors.m <- melt(priors, c('start_pos','side'), c('loss.u','gain.u'))
-    ggplot(priors.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(side~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.4),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+    if (nrow(priors) > 0) {
+      priors.m <- melt(priors, c('start_pos','side'), c('loss.u','gain.u'))
+      ggplot(priors.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(side~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.75,0,.4),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+    } else {
+      NULL
+    }
   })
   
   posteriorPlot <- reactive({
     cat("posteriorPlot...\n")
     
     posterior <- dbGetQuery(db$con, sprintf("SELECT po.start_pos, po.sample, po.\"loss.u\", po.\"gain.u\", po.loss, po.gain, po.bayes_loss, po.bayes_gain FROM posterior_dist po, profile_segment ps1, profile_segment ps2 WHERE po.chr=ps1.chrom AND po.bin>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND po.chr=ps2.chrom AND po.bin<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s AND po.sample IN ('%s')", input$seg.chr, input$seg.start-input$pad, input$seg.start-input$pad, input$seg.chr, input$seg.end+input$pad, input$seg.end+input$pad, paste(input$seg.sample,collapse="','")))
-    posterior.m <- mutate(melt(posterior, c('start_pos','sample'), c('loss','gain','bayes_loss','bayes_gain')),
-                          kind=ifelse(grepl('bayes_',variable),'Bayes','Likelihood'))
-    ggplot(posterior.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(kind+sample~.,scales="free_y") + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.6,0,0),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+
+    if (nrow(posterior) > 0) {
+      posterior.m <- mutate(melt(posterior, c('start_pos','sample'), c('loss','gain','bayes_loss','bayes_gain')),
+                            kind=ifelse(grepl('bayes_',variable),'Bayes','Likelihood'))
+      ggplot(posterior.m, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(kind+sample~.,scales="free_y") + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,.6,0,0),'in'),legend.position="bottom") + ylab("Prob") + xbounds()      
+    } else {
+      NULL
+    }
   })
   
   bkptPlot <- reactive({
@@ -791,8 +804,8 @@ shinyServer(function(input, output, session) {
     if (input$show_winGeno) { plots$winGeno = winGenoPlot() }
 #    if (input$show_prior) { plots$prior = bkptPlot() }
     if (input$show_each_bkpt) { plots$bkpt = eachBkptPlot() }
-    if (input$show_bayes_prior) { plots$bayes.prior = bayesPriorPlot() }
-    if (input$show_posterior) { plots$posterior = posteriorPlot() }
+    if (input$show_bayes_prior) { p <- bayesPriorPlot(); if (!is.null(p)) { plots$bayes.prior=p } }
+    if (input$show_posterior) { p <- posteriorPlot(); if (!is.null(p)) { plots$posterior=p} }
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
   })
   
