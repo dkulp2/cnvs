@@ -85,7 +85,7 @@ mk.posterior <- function(df, pos, change) {
   # load likelihoods for this sample
   bkpts <- dbGetQuery(db$con, sprintf("SELECT b.*, ps.bin, ps.start_pos, ps.end_pos FROM bkpt b, profile_segment ps 
                                       WHERE b.sample='%s' AND ps.chrom='%s' AND ps.start_pos > %s AND ps.start_pos < %s AND ps.end_pos > %s AND ps.end_pos < %s AND b.chr = ps.chrom AND b.bkpt_bin = ps.bin 
-                                      AND b.label='%s'", df$.id, df$chr, pos-2*PAD, pos+PAD, pos-PAD, pos+2*PAD, test.label))
+                                      AND b.label='%s' ORDER BY ps.chrom, ps.start_pos", df$.id, df$chr, pos-2*PAD, pos+PAD, pos-PAD, pos+2*PAD, test.label))
   bkpts <- mutate(bkpts,
                   loss=10^-loss_ll, 
                   gain=10^-gain_ll,
