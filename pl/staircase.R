@@ -94,7 +94,12 @@ csm.new <- ddply(csm, .(.id), function(df) {
   sample <- df$.id[1]
   cat(sample,"\n")
   
-  pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom", data.label, sample))
+  pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom ORDER BY ps.chrom, ps.start_pos", data.label, sample))
+
+  # # of bins in window (e.g. 10 for 1000nt)
+  win.size.bins <- first(which(cumsum(pois.cn.df$end_pos-pois.cn.df$start_pos+1)>=win.size)) # set window size (in bins) to the size of win.size
+  half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
+
   pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
   pois.cnR <- as.list(pois.cn.df[,grep("cnR",names(pois.cn.df))])
   
@@ -107,21 +112,21 @@ csm.new <- ddply(csm, .(.id), function(df) {
     binR <- max(which(pois.cn.df$start_pos <= posR))
     
     bin.count <- binR - binL + 1
-    pA <- pois.cn[[cnA]][binL:(binL+bin.count-win.size.bins)] 
-    pB <- pois.cn[[cnB]][(binL+half.win):(binL+bin.count-half.win)]
+    pA <- pois.cnL[[cnA]][binL:(binL+bin.count-win.size.bins)] 
+    pB <- pois.cnR[[cnB]][binL:(binL+bin.count-win.size.bins)]
     jp <- pA * pB    # joint likelihood
     jp.norm <- jp / sum(jp)  # normalized
     best.jp.bin <- which.max(jp.norm)
     #    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
     if (length(best.jp.bin)>0) { # NAs if length is zero
       best.bin <- binL+(best.jp.bin-1)+half.win # first bin passed the transition
-      best.pos <- bin.map[best.bin,'start_pos'] # left side of bin is the transition point between bins
+      best.pos <- pois.cn.df[best.bin, 'start_pos']
       CI <- conf.int(jp.norm)  # returns CI$left and CI$right, which are bin offsets of best.pos
       binCI.L <- best.bin + CI$left
       binCI.R <- best.bin + CI$right
       
       # bounds are generous, including the furthest base from the best.pos in the transition bins.
-      left.bound <- pois.cn.df[binCI.L-1,'start_pos']
+      left.bound <- pois.cn.df[binCI.L,'start_pos']
       right.bound <- pois.cn.df[binCI.R,'end_pos']
       
       return(data.frame(pos=best.pos, left.bound=left.bound, right.bound=right.bound, win.size=posR-posL+1, left.tail=jp.norm[1], right.tail=jp.norm[length(jp.norm)], binL=binL, binR=binR, best.bin=best.bin, binCI.L=binCI.L, binCI.R=binCI.R))
