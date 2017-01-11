@@ -42,8 +42,8 @@
 # #3: the size of the sliding window in which the left half is CN_a and the right is CN_b
 # #4: the label for the data set, e.g. "gpc_wave2_batch1"
 
-library(dplyr)
 library(plyr)
+library(dplyr)
 library(RPostgreSQL)
 library(zoo)
 
