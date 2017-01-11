@@ -114,7 +114,7 @@ time Rscript ${LIKELIHOODS} ${OUT1_VCF}.txt ${DBCONN} ${MLE_WINSIZE} ${LABEL}
 time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} ${LABEL} 1>&2
 
 # generate a collapse "site" set => smlx2csm
-time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm ${BP_DIST}
+time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm flt smlx2csm
 
 # generate prior distros
 time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${DBCONN} ${LABEL} ${MLE_WINSIZE}
