@@ -88,7 +88,7 @@ conf.int <- function(p, conf=0.95) {
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
   #csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
-  df <- filter(csm, .id %in% c('MH0131634'))
+#  df <- filter(csm, .id %in% c('MH0131634'))
   # df <- csm[csm$.id=='08C79660',]
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
