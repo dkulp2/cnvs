@@ -29,7 +29,7 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
                       y.min=df[[end.name]], y.max=df[[end.name]],
                       x.diff=0, y.diff=0, n=1, cq.min=df[[cq]], one.cn=TRUE,
                       cq.max=df[[cq]], seg=df[[seg]],
-                      paired.reads.min=df[[paired.reads]], paired.reads.max=df[[paired.reads]]
+                      paired.reads.min=df[[paired.reads]], paired.reads.max=df[[paired.reads]],x.n=1,y.n=1
                       ))
   }
   df2 <- df[order(df[[start.name]]),]
@@ -67,7 +67,9 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
            cq.min=min(df2[[cq]][i:j]), cq.max=max(df2[[cq]][i:j]),
            seg=paste0(unique(df2[[seg]][i:j]), collapse = ';'),
            paired.reads.min=min(df2[[paired.reads]][i:j]),
-           paired.reads.max=max(df2[[paired.reads]][i:j]))
+           paired.reads.max=max(df2[[paired.reads]][i:j]),
+           x.n=length(unique(df2[[start.name]][i:j])),
+           y.n=length(unique(df2[[end.name]][i:j])))
   }
   df.merged <- ddply(df.merged, .(i,j), df.merge)
   
@@ -135,8 +137,8 @@ read_known_file <- function(fn) {
   return(as.tbl(gdo))  
 } 
 
-gsdel.dir <- dirname(Sys.getenv(gsdelFile))
-gsdel.base <- sub('.vcf.gz','.txt',basename(Sys.getenv(gsdelFile)))
+gsdel.dir <- dirname(Sys.getenv('gsdelFile'))
+gsdel.base <- sub('.vcf.gz','.txt',basename(Sys.getenv('gsdelFile')))
 
 # create a flattened set of DELs with paired.reads > 0, CQ>13, no conflict CNs
 #gstrip_dels <- read_known_file("/home/dkulp/data/gpc_wave2_batch1/gs_dels.genotypes.txt")
@@ -153,8 +155,8 @@ ret <- flattenFile(gstrip_dels,
                    "/dev/null",
                    restrict=quote(paired.reads > 0 & cq >= 13), remove.discordant.cn = TRUE, choose.best=TRUE)
 
-gscnv.dir <- dirname(Sys.getenv(gscnvFile))
-gscnv.base <- sub('.vcf.gz','.txt',basename(Sys.getenv(gscnvFile)))
+gscnv.dir <- dirname(Sys.getenv('gscnvFile'))
+gscnv.base <- sub('.vcf.gz','.txt',basename(Sys.getenv('gscnvFile')))
 
 gstrip_cnv_del <- rbind(gstrip_dels, read_known_file(sprintf("%s/%s", gsdel.dir, gsdel.base)))
 ret <- flattenFile(gstrip_cnv_del,

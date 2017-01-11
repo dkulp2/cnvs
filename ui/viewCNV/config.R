@@ -15,6 +15,7 @@ data.dir <- "C:/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.4"
 
 tmp.dir <- "C:\\cygwin64\\tmp"
 
+# source(input.dump.fn); input <- input.dump
 input.dump.fn <- 'C:\\cygwin64\\home\\dkulp\\data\\tmp\\inputdump.R'
 
 db.conn.str <- 'dkulp:localhost:5432:seq'

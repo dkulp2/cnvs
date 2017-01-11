@@ -2,7 +2,10 @@ library(plyr)
 library(dplyr)
 library(ggplot2)
 
-db <- src_postgres(dbname='seq', host='localhost', port=5432, user='postgres')
+db.conn.params <- as.list(unlist(strsplit(Sys.getenv('DBCONN'),":")))
+names(db.conn.params) <- c('user','host','port','dbname')
+db <- do.call(src_postgres, db.conn.params)
+
 dbSendQuery(db$con, "SET search_path TO eval")
 
 thresh.intvls <- c(0,0.00001,seq(0.1,0.9,0.1),0.99999,1)
@@ -176,7 +179,9 @@ site.offset.stats <- ddply(site.join.ovlp, .(id), summarize,
                            so.100.frac=start.offset.100/n,
                            so.200.frac=start.offset.200/n,
                            so.100.out=n-start.offset.100,
-                           so.200.out=n-start.offset.200)
+                           so.200.out=n-start.offset.200,
+                           spread=as.integer(max(start.offset)-min(start.offset)),
+                           multi.mode.candidate=spread>300)
 
 hist(site.offset.stats$so.100.out, breaks=seq(0,15),xlab='Samples',ylab='Sites',main=sprintf('Histogram of number of samples\nwith breakpoint further than 1 bin\nfrom median breakpoint\n(site count=%s)',nrow(site.offset.stats)))
 hist(site.offset.stats$so.200.out, breaks=seq(0,10),xlab='Samples',ylab='Sites',main=sprintf('Histogram of number of samples\nwith breakpoint further than 2 bin\nfrom median breakpoint\n(site count=%s)',nrow(site.offset.stats)))
@@ -184,3 +189,5 @@ hist(site.offset.stats$so.200.out, breaks=seq(0,10),xlab='Samples',ylab='Sites',
 plot(site.offset.stats$so.100.frac)
 plot(density(site.offset.stats$so.100.frac),main="Density of Fraction of Samples within 1 Bin")
 
+# If the bounds among different samples is far apart, then it's a good candidate for alternative starts
+ggplot(site.offset.stats, aes(x=n, y=spread, color=multi.mode.candidate)) + geom_jitter() + ylim(0,5000) + xlab("Allele Frequency out of 100") + ggtitle("Min/Max Spread Among Start Bounds")
