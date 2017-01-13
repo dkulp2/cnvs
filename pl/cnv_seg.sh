@@ -119,7 +119,7 @@ time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm flt smlx2csm
 # generate prior distros
 time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${DBCONN} ${LABEL} ${MLE_WINSIZE}
 
-time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${DBCONN} ${TEST_LABEL} ${EXTERNAL_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
+time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${DBCONN} ${INT_LABEL} ${EXT_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
 
 # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
 sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
@@ -131,12 +131,15 @@ tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 #tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE2}.cnvgeno.srt.gz
 
 # create a row per sample deletion for input into R
-zcat ${gsdelFile} | ${GSDEL2TAB} -s ${SITES} > ${GS_DEL_FILE}
+if [ -f $gsdelFile ]; then 
+  zcat ${gsdelFile} | ${GSDEL2TAB} -s ${SITES} > ${GS_DEL_FILE}
 
-# create a site file for input into ProfileGentoyper
-cut -f2-5 ${GS_DEL_FILE} | tail -n +1 | uniq > ${GS_DEL_SITES_FILE}
+  # create a site file for input into ProfileGentoyper
+  cut -f2-5 ${GS_DEL_FILE} | tail -n +1 | uniq > ${GS_DEL_SITES_FILE}
 
-cat ${GS_DEL_SITES_FILE} ${CNV_SEG_SITES_FILE} | sort -n -k3,4 > ${IN2_SITES}
+  cat ${GS_DEL_SITES_FILE} ${CNV_SEG_SITES_FILE} | sort -n -k3,4 > ${IN2_SITES}
+fi
+
 
 exit 0
 
