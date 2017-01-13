@@ -21,6 +21,7 @@ library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','.7', '1000')
+# cmd.args <- c('/home/unix/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','0.7','1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -178,10 +179,15 @@ mk.posterior <- function(df, pos, change) {
   # find max and compute CI.
   metric.res <- as.data.frame(conf.int(metric.vals, bkpt.posterior$start_pos))
   
+  # mysterious R voodoo. Crashes with 'Unsupported vector type language' unless I
+  # first assign these values to temporary variables.
+  pi.id <- ifelse(is.null(prior.int$id), NA_integer_, first(prior.int$id))
+  pe.id <- ifelse(is.null(prior.ext$id), NA_integer_, first(prior.ext$id))
+
   # if priors used, then augment with prior IDs
   return(mutate(metric.res, pos=pos, change=change, 
-                prior.int.id=ifelse(is.null(prior.int$id), NA_integer_, first(prior.int$id)),
-                prior.ext.id=ifelse(is.null(prior.ext$id), NA_integer_, first(prior.ext$id))))
+                prior.int.id=pi.id,
+                prior.ext.id=pe.id))
   
 }
 
