@@ -36,3 +36,4 @@ fi
 perl profile2db.pl -i ${profileFile} -s ${profileFile%%.dat.gz}.seg.txt.gz -p ${profileFile%%.dat.gz}.pro.txt.gz
 sql profile2db.sql
 
+rm ${profileFile%%.dat.gz}.seg.txt.gz ${profileFile%%.dat.gz}.pro.txt.gz
