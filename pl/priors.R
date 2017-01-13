@@ -20,6 +20,7 @@ library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
+# cmd.args <- c('/home/unix/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -116,8 +117,8 @@ save.prior <- function(bkpt.prior, chr, seg, samples, label, n, total.samples, s
 # for each start.map and stop.map 
 #  retrieve the prior data for the samples in the cluster
 ddply(cnvx, .(chr,seg,side,change), function(df) {
-  if (all(df$samples == 'MH0131350') && nrow(df) > 1) {
-    cat(sprintf("Bug with MH0131350 samples! Skipping\n"))
+  if (nrow(df) > 1) {
+    cat(sprintf("Bug with multiple samples! Skipping\n"))
   } else {
     if (df$side == 'L') { 
       pos.min <- df$x.min-PAD; pos.max <- df$x.max+PAD 
