@@ -1,3 +1,5 @@
+CREATE SCHEMA IF NOT EXISTS ${LABEL};
+
 DROP TABLE profile_segment CASCADE;
 CREATE TABLE profile_segment (
        BIN integer,
@@ -28,6 +30,7 @@ CREATE INDEX ON profile_segment(chrom,end_pos);
 
 CREATE UNIQUE INDEX ON profile_counts(sample,chrom,bin);
 
+-- TODO: bkpt should just be created later by likelihood.R
 CREATE TABLE bkpt (
        label text,
        sample text,
