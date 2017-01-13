@@ -17,9 +17,7 @@ source ${THISDIR}/../conf/site.conf
 # set params for this run
 source ${THISDIR}/../conf/cnv.conf
 
-# LABEL refers to this data set. It's used to mark results in the database.
 # TBD: generalize this for test/train. Currently this is incestuous.
-LABEL=$(basename $(dirname $profileFile))
 INT_LABEL=${LABEL}  # label for internal (test) prior
 EXT_LABEL=${LABEL}  # label for external prior
 
