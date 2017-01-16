@@ -30,22 +30,5 @@ CREATE INDEX ON profile_segment(chrom,end_pos);
 
 CREATE UNIQUE INDEX ON profile_counts(sample,chrom,bin);
 
--- TODO: bkpt should just be created later by likelihood.R
-CREATE TABLE bkpt (
-       label text,
-       sample text,
-       chr varchar(2),
-       bkpt_bin integer,
-       gain_ll double precision,
-       gain1_ll double precision,
-       loss_ll double precision,
-       loss1_ll double precision,
-       any_ll double precision,
-       no_bkpt_ll double precision,
-       FOREIGN KEY(chr,bkpt_bin) REFERENCES profile_segment(chrom,bin)
-);
-CREATE UNIQUE INDEX ON bkpt(sample,chr,bkpt_bin);
-CREATE INDEX ON bkpt(bkpt_bin);
-
 VACUUM ANALYZE;
 

@@ -4,7 +4,7 @@
 #   pois - poison likelihoods for a set of bins half the size of win.size to the left and right of each position for each copy number 
 #   bkpt - various combinations of pois representing different types of transitions, i.e. gain, loss, no change.
 #
-#Table "public.pois"
+#Table "pois"
 #  Column  |       Type       | Modifiers
 # ---------+------------------+-----------
 #  label   | text             |
@@ -20,7 +20,7 @@
 #  cnR_3   | double precision |
 #
 #
-# Table "public.bkpt"
+# Table "bkpt"
 #    Column   |         Type         | Modifiers
 # ------------+----------------------+-----------
 #  sample     | text                 |
@@ -49,6 +49,7 @@ library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 #cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','dkulp:localhost:5432:seq','1000','gpc_wave2_batch1')
+#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1A/B12.L500.Q13.W1000.PB0.7/windows.vcf.gz.txt','dkulp:localhost:5432:seq','1000','data_sfari_batch1A')
 cnv.seg.fn <- cmd.args[1]
 db.conn.str <- cmd.args[2]
 win.size <- as.numeric(cmd.args[3])
@@ -61,6 +62,14 @@ db <- do.call(src_postgres, db.conn.params)
 
 dbGetQuery(db$con, "BEGIN TRANSACTION")
 
+# If table doesn't exist, then it will be created on the first write
+if (dbExistsTable(db$con, "pois")) {
+   dbGetQuery(db$con, "DROP TABLE pois")
+}
+if (dbExistsTable(db$con, "bkpt")) {
+   dbGetQuery(db$con, "DROP TABLE bkpt");
+}
+
 bin.map <- dbGetQuery(db$con, "select * from profile_segment")
 rownames(bin.map) <- bin.map$bin
 
@@ -68,19 +77,22 @@ win.size.bins <- first(which(cumsum(bin.map$elength)>=win.size)) # set window si
 
 half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
 
-cat("Counting samples in profile_counts")
+cat("Counting samples in profile_counts\n")
 samples <- dbGetQuery(db$con, "select distinct sample from profile_counts")
 #samples <- data.frame(sample=c('08C79660','09C100176'), stringsAsFactors = FALSE)
+#samples <- data.frame(sample=c('SSC01107','SSC03247','SSC02887','SSC03943'), stringsAsFactors=FALSE)
 cat(sprintf("Processing %s samples\n", nrow(samples)))
 
 sapply(samples$sample, function(sample) {
   cat(sample,"\n")
   
   # FIXME: operate per chromosome
-  all.profiles <- dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s' order by chrom, bin", sample))
+  cat(sprintf("%s: Retrieving profile counts\n", Sys.time()))
+  all.profiles <- arrange(dbGetQuery(db$con, sprintf("select * from profile_counts where sample='%s'", sample)), chrom, bin)
   
   cn.vals <- c(0.1,1:3)
 
+  cat(sprintf("%s: Rollapply on %s rows\n", Sys.time(), nrow(all.profiles)))
   exp.cn <- llply(cn.vals, function(cn) {
     rollapply(all.profiles$expected*cn, half.win, sum)
   })
@@ -105,16 +117,8 @@ sapply(samples$sample, function(sample) {
                       do.call(data.frame, pois.cnL), do.call(data.frame, pois.cnR))
   
   # remove any results from a previous run and write to DB
-  # If table doesn't exist, then it will be created on the first write
-  pois.exists <- dbExistsTable(db$con, "pois")
-  if (pois.exists) {
-    dbGetQuery(db$con, sprintf("DELETE FROM pois WHERE sample='%s'",sample))
-  }
+  cat(sprintf("%s: Writing pois\n", Sys.time()))
   dbWriteTable(db$con, "pois", pois.cn.df, append=TRUE, row.names = FALSE)
-  if (!pois.exists) {  # new table
-    dbGetQuery(db$con, "CREATE UNIQUE INDEX ON pois(label,sample,chr,bin)")
-    dbGetQuery(db$con, "ALTER TABLE pois ADD FOREIGN KEY(chr,bin) REFERENCES profile_segment(chrom,bin)")
-  }
   
   # sum over the probability of each pair of indices in idx, e.g. for gain1.idx:
   # pois.cnL[[1]]*pois.cnR[[2]]+pois.cnL[[2]]*pois.cnR[[3]]+pois.cnL[[3]]*pois.cnL[[4]]
@@ -125,6 +129,7 @@ sapply(samples$sample, function(sample) {
       }), 1, sum))
   }
   
+  cat(sprintf("%s: Computing bkpt\n", Sys.time()))
   gain.idx <- combn(1:4,2)
   loss.idx <- gain.idx[c(2,1),]
   gain1.idx <- matrix(c(1,2,2,3,3,4), nrow=2)
@@ -144,14 +149,23 @@ sapply(samples$sample, function(sample) {
                                gain1_ll=bkpt.gain1.ll, loss_ll=bkpt.loss.ll, loss1_ll=bkpt.loss1.ll,
                                any_ll=bkpt.any.ll, no_bkpt_ll=no.bkpt.ll),
                     abs(bkpt.loss.ll)<Inf & abs(bkpt.gain.ll)<Inf & abs(no.bkpt.ll)<Inf)
-  
-  # remove any results from a previous run and write to DB
-  dbGetQuery(db$con, sprintf("DELETE FROM bkpt WHERE sample='%s'",sample))
+
+  cat(sprintf("%s: Writing bkpt\n", Sys.time()))
   dbWriteTable(db$con, "bkpt", bkpt.df, append=TRUE, row.names = FALSE)
   
 })
 
+cat("Done.\nCreating indices and foreign keys on pois and bkpt\n")
+dbGetQuery(db$con, "CREATE UNIQUE INDEX ON pois(label,sample,chr,bin)")
+dbGetQuery(db$con, "ALTER TABLE pois ADD FOREIGN KEY(chr,bin) REFERENCES profile_segment(chrom,bin)")
+
+dbGetQuery(db$con, "CREATE UNIQUE INDEX ON bkpt(sample,chr,bkpt_bin)")
+dbGetQuery(db$con, "CREATE INDEX ON bkpt(bkpt_bin)")
+dbGetQuery(db$con, "ALTER TABLE bkpt ADD FOREIGN KEY(chr,bkpt_bin) REFERENCES profile_segment(chrom,bin)")
+
 dbCommit(db$con)
-dbSendQuery(db$con, "VACUUM ANALYZE bkpt")
-dbSendQuery(db$con, "VACUUM ANALYZE pois")
+
+cat("Done.\nVACUUMing\n")
+dbGetQuery(db$con, "VACUUM ANALYZE bkpt")
+dbGetQuery(db$con, "VACUUM ANALYZE pois")
 dbDisconnect(db$con)
