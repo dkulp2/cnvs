@@ -15,6 +15,7 @@ source ${THISDIR}/../conf/cnv.conf
 SCRIPTS=${THISDIR}/../pl
 ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
 
+mkdir -p ${workDir}
 eval "gunzip -c ${profileFile}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${workDir}/sites.txt
 
 # generate simplified tab files from VCF
