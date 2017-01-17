@@ -29,6 +29,7 @@ CREATE INDEX ON profile_segment(chrom,start_pos);
 CREATE INDEX ON profile_segment(chrom,end_pos);
 
 CREATE UNIQUE INDEX ON profile_counts(sample,chrom,bin);
+CREATE INDEX ON profile_counts(sample);  -- might improve performance on sample query
 
 VACUUM ANALYZE;
 
