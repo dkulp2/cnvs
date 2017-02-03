@@ -37,16 +37,13 @@ overlap <- function(df, start.name='start.map', end.name='end.map', label='cn', 
   
   # perform closure. repeat until no change.
   df2$has.ovlp2 <- rep(FALSE, nrow(df2))
-  df2$end.max2 <- rep(0, nrow(df2))
-  
   df2$end.max <- df2[[end.name]]
   again <- TRUE
   while (again) {
     df2$has.ovlp <- c(FALSE, df2[[start.name]][i2n] < df2$end.max[i2n-1])
     df2$end.max <- c(df2[[end.name]][1], ifelse(df2$has.ovlp[i2n], pmax(df2$end.max[i2n],df2$end.max[i2n-1]), df2$end.max[i2n]))
-    again <- !all(df2$has.ovlp==df2$has.ovlp2) || !all(df2$end.max==df2$end.max2)
+    again <- !all(df2$has.ovlp==df2$has.ovlp2)
     df2$has.ovlp2 <- df2$has.ovlp
-    df2$end.max2 <- df2$end.max
   }
   
   # starts are where there is no overlap

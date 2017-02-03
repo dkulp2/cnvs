@@ -66,19 +66,6 @@ quartets <- ddply(ped, .(family), function(df) {
   }
 })
 
-# create a hash lookup: family.lookup[[sample]] => family
-# Only good for one sample at a time.
-# create a family.sample data.frame for joining
-family.lookup <- new.env()
-family.sample <- 
-  ddply(quartets, .(family), function(f) { 
-    assign(f$sib1, f$family, envir=family.lookup)
-    assign(f$sib2, f$family, envir=family.lookup)
-    assign(f$father, f$family, envir=family.lookup)
-    assign(f$mother, f$family, envir=family.lookup)
-    return(tibble(sample=c(f$sib1, f$sib2, f$father, f$mother), who=c('sib1','sib2','father','mother')))
-  })
-
 
 # load the "cn.segs.merged" table and add CN=2 for all gaps
 load.cnvs <- function(d) { 
@@ -89,7 +76,6 @@ load.cnvs <- function(d) {
   }
   new.cnvs <- 
     ddply(cn.segs.merged, .(.id, chr), function(df) {
-      cat(first(df$.id),"\n")
       df <- arrange(filter(df, end.map-start.map > MIN.CNV.LEN), start.map)
       row.range <- 2:nrow(df)
       gap.pre <- which(df$start.map[row.range] > df$end.map[row.range-1])+1
@@ -106,23 +92,6 @@ load.cnvs <- function(d) {
         cat(sprintf("FIXME: Removing %s overlapping predictions in %s\n", length(ovlps), first(df$.id)))
         print(df[ovlps,])
         df <- df[-ovlps,]
-        row.range <- 2:nrow(df)
-      }
-      
-      # sometimes the same CN has adjacent segments
-      adjacents <- which(df$start.map[row.range]==df$end.map[row.range-1] &
-                           df$cn[row.range]==df$cn[row.range-1]) + 1
-      if (length(adjacents) > 2) {
-        adj.range <- 2:(length(adjacents)-1)
-        tweens <- adjacents[adj.range]==adjacents[adj.range-1]+1 & adjacents[adj.range]==adjacents[adj.range+1]-1
-        stopifnot(all(!tweens)) # do a closure and remove tweens
-      }
-      if (length(adjacents) > 0) {
-        cat(sprintf("FIXME: Adjacent calls for %s with same CN\n", first(df$.id)))
-        df$end.CI.L[adjacents-1] <- df$end.CI.L[adjacents]
-        df$end.CI.R[adjacents-1] <- df$end.CI.R[adjacents]
-        df$end.map[adjacents-1] <- df$end.map[adjacents]
-        df <- df[-adjacents,]
       }
       
       rbind(data.frame(label=paste0(df$.id[1],'_START'),
@@ -303,15 +272,13 @@ lapply(unique(segs$chr), function(chr) {
 # display location of CNVs. Only the largest CNVs are visible
 print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
 
-
 # scan through all segments simultaneously
 # If we are all overlapping a CN=2 and it is big, then reduce its length for all
 
 group.sz <- 20
-group.seq <- seq(1,100,group.sz)
 
 segs.group <-
-lapply(group.seq, function(x) {
+lapply(seq(1,100,group.sz), function(x) {
   all.cn2 <- list()  # each element is a vector of row indices, one for each sample
   remove.nt <- list() # amount to remove
 
@@ -370,6 +337,22 @@ lapply(group.seq, function(x) {
       return(final.segs)  
     })
   
+  # # adjust length of CN=2 to a small value
+  # # use rolling sum to adjust all rows
+  # segs <- ddply(segs, .(family, chr), function(df) {
+  #   big.twos <- df$sib1.cn==df$sib2.cn & df$sib1.cn==df$par1.cn & df$sib1.cn==df$par2.cn & df$sib1.cn==2 & df$len > 5000
+  #   df$len[big.twos] <- 50
+  #   df$end <- 1+cumsum(df$len)
+  #   df$start[2:nrow(df)] <- df$end[1:(nrow(df)-1)]
+  #   return(df)
+  # })
+  
+#  ggplot(filter(segs2, ibd.state=='IBD2' & len>1200 & family %in% quartets$family[1:10]), aes(x=start, xend=end, y=sib1.cn, yend=sib1.cn, color=sib.eq)) + geom_segment(size=2) + facet_grid(family~.)
+  
+#  print(ggplot(filter(segs2, !sib.wt & len>1200), aes(x=start, xend=end, y=fam, yend=fam, color=sib.eq)) + geom_segment(size=3) + facet_grid(ibd.state~cnv))
+  
+#  ggplot(filter(segs2, family %in% quartets$family[1:10]), aes(x=start, xend=end, y=sib1.cn, yend=sib1.cn, color=ibd.state)) + geom_point() + facet_grid(family~.)
+  
 })
 
 pdf("concordance.pdf")
@@ -379,169 +362,4 @@ sapply(segs.group, function(df) {
           geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\nseg > ",MIN.OVLP.LEN)))
 })
 dev.off()
-
-# count concordance by base
-cts <-
-  ldply(seq(0,1200,100), function(len.min) {
-    ddply(filter(segs, !is.na(ibd.state) & len > len.min), .(cnv), function(df) {
-      mutate(data.frame(len.min,tot.bases=sum(as.numeric(df$len)), conc.bases=sum(as.numeric(df$len[df$concordant]))), conc.pct=conc.bases/tot.bases)
-    })
-  })
-
-#ggplot(filter(cts, cnv!='WT'), aes(x=len.min, y=conc.pct)) + geom_line() + facet_grid(.~cnv)
-ggplot(filter(cts, cnv=='DEL'), aes(x=len.min, y=conc.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By Base For Deletions")
-
-# identify sites:
-# All segments are collapsed and each group is called a site
-# Each site has a length, membership & frequency, and consistency
-all.sibs <- cbind(rbind(cnvs.sibs[[1]], cnvs.sibs[[2]]), sib=TRUE)
-all.pars <- cbind(rbind(cnvs.parents[[1]], cnvs.parents[[2]]), sib=FALSE)
-cnvs.all <- rbind(all.sibs, all.pars)
-
-# overlap(df) - returns a flattened data.frame across all samples
-overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
-  if (nrow(df)==1) {
-    return(data.frame(i=1,j=1,start.map=df$start.map,end.map=df$end.map,
-                      x.min=df$start.map, x.max=df$start.map,
-                      y.min=df$end.map, y.max=df$end.map,
-                      x.diff=0, y.diff=0, n=1))
-  }
-  df2 <- arrange(df, start.map, end.map)
-  i2n <- 2:nrow(df2)
-  
-  # perform closure. repeat until no change.
-  df2$has.ovlp2 <- rep(FALSE, nrow(df2))
-  df2$end.max2 <- rep(0, nrow(df2))
-  
-  df2$end.max <- df2$end.map
-  again <- TRUE
-  while (again) {
-    df2$has.ovlp <- c(FALSE, df2$start.map[i2n] < df2$end.max[i2n-1])
-    df2$end.max <- c(df2$end.map[1], ifelse(df2$has.ovlp[i2n], pmax(df2$end.max[i2n],df2$end.max[i2n-1]), df2$end.max[i2n]))
-    again <- !all(df2$has.ovlp==df2$has.ovlp2) || !all(df2$end.max==df2$end.max2)
-    df2$has.ovlp2 <- df2$has.ovlp
-    df2$end.max2 <- df2$end.max
-  }
-  
-  # starts are where there is no overlap
-  # ends are the end.max in the row before the starts. skip row 1. Add end.max of row N
-  i <- which(!df2$has.ovlp)
-  j <- c(which(!df2$has.ovlp[i2n]), nrow(df2))
-  starts <- df2$start.map[i]
-  ends <- df2$end.max[j]
-  
-  df.merged <- data.frame(i=i, j=j, start.map=starts, end.map=ends)
-
-  df.merge <- function(x, i, j) {
-    mutate(x, i, j, x.min=min(df2$start.map[i:j]), 
-           x.max=max(df2$start.map[i:j]),
-           y.min=min(df2$end.map[i:j]), y.max=max(df2$end.map[i:j]),
-           x.diff=x.max-x.min, y.diff=y.max-y.min,
-           n=j-i+1,
-           xs=paste0(df2$start.map[i:j], collapse=';'),
-           ys=paste0(df2$end.map[i:j], collapse=';'),
-           seg=paste0(df2[[seg]][i:j], collapse = ';'),
-           cns=paste0(df2$cn[i:j], collapse=';'),
-           samples=paste0(df2[['.id']][i:j], collapse=';'))
-  }
-  df.merged <- ddply(df.merged, .(i,j), df.merge)
-  
-  return(df.merged)
-  
-}
-
-# collapse CNVs
-cnvs.c <- as.tbl(mutate(ddply(filter(cnvs.all, cn!=2), .(chr), overlap, seg='label')))
-cnvs.c$len <- cnvs.c$end.map - cnvs.c$start.map
-cnvs.c$site.id <- 1:nrow(cnvs.c)
-cnvs.c$seg <- NULL
-cnvs.c <- ddply(cnvs.c, .(site.id), function(df) {
-  xs <- as.numeric(unlist(strsplit(df$xs, ';')))
-  ys <- as.numeric(unlist(strsplit(df$ys, ';')))
-
-  xs.med <- median(xs)
-  ys.med <- median(ys)
-
-  offsets <- c(xs - df$start.map, df$end.map - ys)
-  stopifnot(all(offsets>=0))
-  
-  sd1 <- sd(offsets)
-  outliers <- abs(xs - xs.med) > 2*sd1 | abs(ys-ys.med) > 2*sd1
-  xs2 <- xs[!outliers]
-  ys2 <- ys[!outliers]
-  offsets2 <- c(xs2 - df$start.map, df$end.map - ys2)
-  if (length(offsets2) < 2) { sd2 <- 0 } else { sd2 <- sd(offsets2) }
-  outlier.n <- length(xs)-length(xs2)
-  return(mutate(df, sd1=sd1, sd2=sd2, outlier.n=outlier.n))
-})
-
-# create a map of seg (i.e. site ID to sample name of members)
-site.map <- ddply(cnvs.c, .(site.id), function(df) {
-  xs <- as.numeric(unlist(strsplit(df$xs, ';')))
-  ys <- as.numeric(unlist(strsplit(df$ys, ';')))
-  samples <- unlist(strsplit(df$samples, ';'))
-  cns <- as.numeric(unlist(strsplit(df$cns, ';')))
-
-  return(data.frame(chr=df$chr, start.map=df$start.map, end.map=df$end.map, sample=samples, cn=cns, x=xs, y=ys, stringsAsFactors = FALSE))
-})
-
-site.map <- as.tbl(merge(site.map, family.sample))
-
-# perform concordance. for each site, for each quartet, check concordance. If a sample is missing, then cn=2
-site.concordance <-
-  ddply(site.map, .(site.id, family), function(site.fam) {
-    # in general there are 0, 1 or more rows per sample. If there is 0 then that sample is CN=2.
-    # If 1, then a single CN!=2 for that site, e.g. CN=1.
-    # If >1, then there might be multiple CNs for that sample within the site (e.g. CN=3 and CN=4)
-    # or due to an outstanding bug where there are adjacent segments with the same CN.
-    
-    # site.fam <- filter(site.map, site.id==30 & family==11348)
-    # site.fam <- filter(site.map, site.id==30 & family==11420)
-    # site.fam <- filter(site.map, site.id==93 & family==11218)
-    site.start <- site.fam$start.map[1]
-    site.end <- site.fam$end.map[1]
-    
-    # get the sib1 and sib2 sample names from family.sample
-    samples <- filter(family.sample, family==site.fam$family[1])
-    sib1.sample <- samples$sample[samples$who=='sib1']
-    sib2.sample <- samples$sample[samples$who=='sib2']
-    
-    site.fam <- merge(site.fam, samples, all.y=TRUE)
-    missing <- is.na(site.fam$site.id)
-    site.fam$cn[missing] <- 2
-    site.fam$x[missing] <- site.start
-    site.fam$y[missing] <- site.end
-    
-    # HACK! Punt on the multiple CN!=2 segments per sample as this point. FIXME.
-    site.fam <- ddply(site.fam, .(who), function(x) x[1,])
-    
-    # filter ibd on sib1, sib2, chr and position to derive the IBD state
-    this.ibd <- filter(ibd, ((SIB1==sib1.sample & SIB2==sib2.sample) | (SIB1==sib2.sample & SIB2==sib1.sample)) & START < site.end & END > site.start)
-    ibd.state <- ibd.code(this.ibd)
-    
-    parm.cn <- site.fam$cn[site.fam$who == 'mother']
-    parp.cn <- site.fam$cn[site.fam$who == 'father']
-    sib.sum <- sum(site.fam$cn[site.fam$who %in% c('sib1','sib2')])
-    par.sum <- sum(site.fam$cn[site.fam$who %in% c('mother','father')])
-    sums.eq <- sib.sum == par.sum
-    sib.eq <- site.fam$cn[site.fam$who == 'sib1'] == site.fam$cn[site.fam$who == 'sib2']
-    
-    # IBD1P
-    sib.sum.less.m <- sib.sum - parm.cn
-    sib.sum.less.m.even <- sib.sum.less.m %% 2 == 0
-    sib.sum.less.m.div2.ge0 <- sib.sum.less.m / 2 >= 0
-    sib.sum.less.m.div2.lef <- sib.sum.less.m / 2 <= parp.cn
-    ibd1p.conc <- sib.sum.less.m.even & sib.sum.less.m.div2.ge0 & sib.sum.less.m.div2.lef
-    
-    # IBD1M
-    sib.sum.less.p <- sib.sum - parp.cn
-    sib.sum.less.p.even <- sib.sum.less.p %% 2 == 0
-    sib.sum.less.p.div2.ge0 <- sib.sum.less.p / 2 >= 0
-    sib.sum.less.p.div2.lem <- sib.sum.less.p / 2 <= parm.cn
-    ibd1m.conc <- sib.sum.less.p.even & sib.sum.less.p.div2.ge0 & sib.sum.less.p.div2.lem
-    
-    site.concordance <- ifelse(ibd.state=='IBD0', sums.eq, ifelse(ibd.state=='IBD2', sib.eq, ifelse(ibd.state=='IBD1P', ibd1p.conc, ibd1m.conc)))
-    return(data.frame(site.concordance=site.concordance))
-  })
-
 
