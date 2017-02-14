@@ -19,6 +19,7 @@ library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 #cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','gpc_wave2_batch1')
+#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1B/B12.L500.Q13.W1000.PB0.7/sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','data_sfari_batch1B')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -35,6 +36,25 @@ csm$len <- csm$end.map - csm$start.map
 
 # identify "small" NAs and remove them
 csm <- subset(csm, !is.na(cn) | len > 4*max.join)
+
+# merge rows with same CN now that small NAs are removed
+csm <- ddply(csm, .(.id, chr), function(df) {
+  # the first row of a pair of adjacent rows with the same CN
+  idx <- 1:(nrow(df)-1)
+  adj <- df$cn[idx] == df$cn[idx+1]
+  while (any(adj, na.rm=TRUE)) {
+    adj.idx <- which(adj)
+    df[adj.idx, 'end.i'] <- df[adj.idx+1, 'end.i']
+    df[adj.idx, 'end.map'] <- df[adj.idx+1, 'end.map']
+    df[adj.idx, 'label'] <- paste0(df[adj.idx, 'label'], '_', df[adj.idx+1, 'label'])
+    df <- df[-c(adj.idx+1),]
+    idx <- 1:(nrow(df)-1)
+    adj <- df$cn[idx] == df$cn[idx+1]
+  } 
+  df$len <- df$end.map - df$start.map 
+  return(df)
+})
+
 
 # connect to DB
 db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
