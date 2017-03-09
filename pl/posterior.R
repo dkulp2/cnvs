@@ -22,6 +22,7 @@ library(reshape)
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','.7', '1000')
 # cmd.args <- c('/home/unix/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','0.7','1000')
+#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1A2/B12.L500.Q13.W1000.PB0.7/sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','data_sfari_batch1A2','data_sfari_batch1A2','0.7','1000')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
@@ -158,7 +159,7 @@ mk.posterior <- function(df, pos, change) {
       
     } else {
       # no prior (flat)
-      mutate(bkpts, bayes_loss=loss, bayes_gain=gain, bayes_nc=nc, bin=bkpt_bin, loss.u=NA, gain.u=NA, nc.u=NA)
+      mutate(bkpts, bayes_loss=loss, bayes_gain=gain, bayes_nc=nc, bin=bkpt_bin, loss.u=NA_real_, gain.u=NA_real_, nc.u=NA_real_)
     }
   
   dbWriteTable(db$con, "posterior_dist", mutate(bkpt.posterior[,c('bin','label','sample','chr','start_pos','end_pos',
