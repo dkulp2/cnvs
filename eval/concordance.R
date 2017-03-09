@@ -5,13 +5,15 @@
 library(plyr)
 library(dplyr)
 library(ggplot2)
+library(RColorBrewer)
+library(sqldf)
 
-big2 <- 200  # any region greater than big2 nts that is CN=2 for all samples is replaced
+big2 <- 200  # any region greater than big2 nts that is CN=2 for all samples is replaced by a small region
 big2.replacement <- 5 # the size of the new CN=2 region
 MIN.CNV.LEN <- 1200
 
 # load data ########################
-basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.run2'
 
 sibs <- c('data_sfari_batch1a','data_sfari_batch1b')
 parents <- c('data_sfari_batch1c','data_sfari_batch1d')
@@ -76,7 +78,7 @@ family.sample <-
     assign(f$sib2, f$family, envir=family.lookup)
     assign(f$father, f$family, envir=family.lookup)
     assign(f$mother, f$family, envir=family.lookup)
-    return(tibble(sample=c(f$sib1, f$sib2, f$father, f$mother), who=c('sib1','sib2','father','mother')))
+    return(data.frame(sample=c(f$sib1, f$sib2, f$father, f$mother), who=c('sib1','sib2','father','mother')))
   })
 
 
@@ -109,7 +111,7 @@ load.cnvs <- function(d) {
         row.range <- 2:nrow(df)
       }
       
-      # sometimes the same CN has adjacent segments
+      # sometimes the same CN has adjacent segments. 2/28/17 this bug is fixed and shouldn't occur
       adjacents <- which(df$start.map[row.range]==df$end.map[row.range-1] &
                            df$cn[row.range]==df$cn[row.range-1]) + 1
       if (length(adjacents) > 2) {
@@ -372,17 +374,17 @@ lapply(group.seq, function(x) {
   
 })
 
-pdf("concordance.pdf")
+#pdf("concordance.pdf")
 MIN.OVLP.LEN <- 400
 sapply(segs.group, function(df) {
   print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) + 
           geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\nseg > ",MIN.OVLP.LEN)))
 })
-dev.off()
+#dev.off()
 
 # count concordance by base
 cts <-
-  ldply(seq(0,1200,100), function(len.min) {
+  ldply(seq(0,max(segs$len[!segs$all.wt]),100), function(len.min) {
     ddply(filter(segs, !is.na(ibd.state) & len > len.min), .(cnv), function(df) {
       mutate(data.frame(len.min,tot.bases=sum(as.numeric(df$len)), conc.bases=sum(as.numeric(df$len[df$concordant]))), conc.pct=conc.bases/tot.bases)
     })
@@ -390,6 +392,17 @@ cts <-
 
 #ggplot(filter(cts, cnv!='WT'), aes(x=len.min, y=conc.pct)) + geom_line() + facet_grid(.~cnv)
 ggplot(filter(cts, cnv=='DEL'), aes(x=len.min, y=conc.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By Base For Deletions")
+
+ggplot(filter(segs, len>2000 & cnv=='DEL' & !is.na(concordant)), aes(x=start, y=fam, xend=end, yend=fam)) + geom_point() + geom_segment() + geom_point(aes(x=end)) + facet_grid(concordant+cnv~.) + ggtitle("segments > 2000 nt")
+
+# As segments increase, concordance tends to rise
+# Looking across the genome, at a high level it's clear that there are a few sites (three major ones) where there
+# is high frequency and much disagreement.
+
+# Here's a zoom into the first such site.
+ggplot(filter(segs, !all.wt & start < 2.65e7 & start > 2.6e7), aes(x=start, y=fam, xend=end, yend=fam, color=concordant)) + geom_point() + geom_segment() + geom_point(aes(x=end)) + facet_grid(concordant~.)
+
+# I checked these regions and only one of the three is an alpha satellite.
 
 # identify sites:
 # All segments are collapsed and each group is called a site
@@ -540,8 +553,173 @@ site.concordance <-
     sib.sum.less.p.div2.lem <- sib.sum.less.p / 2 <= parm.cn
     ibd1m.conc <- sib.sum.less.p.even & sib.sum.less.p.div2.ge0 & sib.sum.less.p.div2.lem
     
-    site.concordance <- ifelse(ibd.state=='IBD0', sums.eq, ifelse(ibd.state=='IBD2', sib.eq, ifelse(ibd.state=='IBD1P', ibd1p.conc, ibd1m.conc)))
-    return(data.frame(site.concordance=site.concordance))
+    site.concordance <- ifelse(ibd.state=='IBD0', sums.eq, ifelse(ibd.state=='IBD2', sib.eq, ifelse(ibd.state=='IBD1P', ibd1p.conc, ifelse(ibd.state=='IBD1M', ibd1m.conc, NA))))
+    if (length(site.concordance)==0 || is.na(site.concordance)) {
+      return(data.frame())
+    } else {
+      return(data.frame(site.concordance=site.concordance, site.len=site.end-site.start))
+    }
   })
 
+site.concordance <- arrange(site.concordance, -site.len)
+site.concordance$trues <- cumsum(site.concordance$site.concordance)
+site.concordance$site.fams <- 1:nrow(site.concordance)
+site.concordance$frac.conc <- site.concordance$trues / site.concordance$site.fams
+
+
+# treat each breakpoint as an entity instead of pairs of breakpoints representing sites.
+# each breakpoint has a position, a left and right copy number, a confidence interval and ???
+bp.all <- ddply(cnvs.all, .(.id, chr), function(df) {
+  bp <- select(df[2:nrow(df),], sample=.id, chr, CI.L=start.CI.L, bp.map=start.map, CI.R=start.CI.R, cn.R=cn, sib)
+  bp$cn.L <- bp$cn.L <- c(2, bp$cn.R[1:(nrow(bp)-1)])
+  return(bp)
+}) %>% select(-.id)
+
+# > head(bp.all)
+# .id chr    CI.L  bp.map    CI.R cn.R  sib cn.L
+# 2 SS0013018  20  700036  700236  700336    1 TRUE    2
+# 3 SS0013018  20  701480  701480  701480    2 TRUE    1
+# 4 SS0013018  20 1388308 1389108 1389444    1 TRUE    2
+# 5 SS0013018  20 1390844 1390844 1390844    2 TRUE    1
+# 6 SS0013018  20 1560729 1561029 1561247    1 TRUE    2
+# 7 SS0013018  20 1594059 1594059 1594059    2 TRUE    1
+
+cnvsAll <- rename(cnvs.all, sample=.id) # no dots for sqldf!
+
+# So what about the samples with no breakpoint? In order to measure bp concordance We still need to know what the CN is.
+# For each quartet, cluster by overlapping CIs. For each set of BPs, fill in missing by querying for the overlapping segment.
+bp <-
+ddply(family.sample, .(family), function(fam) {
+  # fam <- filter(family.sample, family==11006)
+  q.bp <- arrange(merge(bp.all, fam), CI.L, CI.R)
+  if (nrow(q.bp) > 0) {
+    # here we go again. Another collapse. This time by CI range
+    # this time, scan through, setting a cluster ID on each row, incrementing the ID when it does not overlap the previous one
+    idx <- 2:nrow(q.bp)
+    max.R <- q.bp$CI.R
+    ovlp2 <- rep(FALSE, nrow(q.bp)-1)
+    ovlp <- max.R[idx-1] >= q.bp$CI.L[idx]
+    while (!all(ovlp==ovlp2)) {
+      max.R <- c(max.R[1], ifelse(ovlp, pmax(max.R[idx], max.R[idx-1]), max.R[idx]))
+      ovlp2 <- ovlp
+      ovlp <- max.R[idx-1] >= q.bp$CI.L[idx]
+    }
+    cluster.starts <- c(1,which(!ovlp)+1)
+    q.bp$cluster <- 0
+    q.bp$cluster[cluster.starts] <- 1
+    q.bp$cluster <- cumsum(q.bp$cluster)
+    
+    
+    # for each cluster, complete the family by adding CN.L=2, CN.R=2 for missing samples
+    q.bp <- ddply(q.bp, .(cluster), function(q.bp.c) {
+      # q.bp.c <- filter(q.bp, cluster==2)
+      if (nrow(q.bp.c) < 4) {
+        CI.L <- min(q.bp.c$CI.L)
+        CI.R <- max(q.bp.c$CI.R)
+        missing <- !(fam$sample %in% q.bp.c$sample)
+        missing.samples <- fam$sample[missing]
+        missing.sib <- fam$who[missing] %in% c('sib1','sib2')
+        missingTbl <- data.frame(sample=missing.samples)
+        
+        # retrieve the CN for the missing samples in the current range
+        missing.cn <- sqldf(sprintf("SELECT c.sample, c.cn FROM cnvsAll c, missingTbl m WHERE c.sample=m.sample AND \"start.map\" < %s AND \"end.map\" > %s", CI.R, CI.L), drv='SQLite')
+        
+        if (nrow(missing.cn)+nrow(q.bp.c) == 4) {
+          
+          # combine bp and missing bp together
+          rbind(q.bp.c,
+                data.frame(sample=missing.cn$sample, chr=q.bp.c$chr[1], CI.L=CI.L, bp.map=NA, CI.R=CI.R, cn.R=missing.cn$cn, 
+                           sib=missing.sib, cn.L=missing.cn$cn, family=q.bp.c$family[1], who=fam$who[missing], cluster=q.bp.c$cluster[1]))
+          
+        } else {
+          # there could be a number of different things going on here.
+          # Most commonly the location is passed the "end" of the annotated chromosome for a sample.
+          # Sometimes there are multiple regions for the same sample, which shouldn't happen!
+          if (any(q.bp.c$bp.map < 62900000)) {
+            cat("Problem entry:\n")
+            print(q.bp.c)
+            print(missing.cn)
+          }
+          if (!(all(table(missing.cn$sample) == 1))) {
+            cat("Multiple entries for some samples!\n")
+          }
+          return(data.frame())
+        }
+        
+      } else {
+        return(q.bp.c)  
+      }
+    })
+    
+  } else { return(data.frame()) }
+})
+
+# Add family ID to ibd table
+sib.pairs <- rbind(data.frame(family=quartets$family, PAIR_NAME=paste0(quartets$sib1,'-',quartets$sib2)),
+                   data.frame(family=quartets$family, PAIR_NAME=paste0(quartets$sib2,'-',quartets$sib1)))
+ibd <- merge(sib.pairs, ibd)
+
+# Extract min/max range for each bp
+bpbounds <- ddply(bp, .(family,cluster), summarize, start=min(CI.L), end=max(CI.R))
+
+# join with ibd to label each bp with an IBD code
+z <- sqldf("select b.*, i.STATE, i.PATERNAL_IND, i.MATERNAL_IND from bpbounds b, ibd i where b.family=i.family and b.start <= i.END and b.end >= i.START", drv='SQLite')
+z$ibd.code <- ibd.code(z)
+
+bp <- merge(bp, subset(z, select=c(family, cluster, ibd.code)))
+# bp:
+#    family cluster   sample chr    CI.L  bp.map    CI.R cn.R   sib cn.L    who ibd.code
+# 1   11006       1 SSC00006  20 1388908 1389108 1389208    1  TRUE    2   sib2     IBD0
+# 2   11006       1 SSC00005  20 1388908 1389108 1389444    0 FALSE    2 mother     IBD0
+# 3   11006       1 SSC00003  20 1388308 1389108 1390144    1  TRUE    2   sib1     IBD0
+# 4   11006       1 SSC00004  20 1388308      NA 1390144    2 FALSE    2 father     IBD0
+# 5   11006      10 SSC00003  20 1995267      NA 1995567    2  TRUE    2   sib1     IBD0
+# 6   11006      10 SSC00005  20 1995267      NA 1995567    2 FALSE    2 mother     IBD0
+# 7   11006      10 SSC00004  20 1995267 1995467 1995567    1 FALSE    2 father     IBD0
+# 8   11006      10 SSC00006  20 1995267 1995367 1995467    1  TRUE    2   sib2     IBD0
+# 9   11006      11 SSC00005  20 1997485      NA 1997485    2 FALSE    2 mother     IBD0
+# 10  11006      11 SSC00004  20 1997485      NA 1997485    2 FALSE    2 father     IBD0
+
+concordance.stats <- function(df, cn) {
+  ibd.state <- df$ibd.code[1]
+  
+  parm.cn <- df[[cn]][df$who == 'mother']
+  parp.cn <- df[[cn]][df$who == 'father']
+  sib.sum <- sum(df[[cn]][df$who %in% c('sib1','sib2')])
+  par.sum <- sum(df[[cn]][df$who %in% c('mother','father')])
+  sums.eq <- sib.sum == par.sum
+  sib.eq <- df[[cn]][df$who == 'sib1'] == df[[cn]][df$who == 'sib2']
+  
+  # IBD1P
+  sib.sum.less.m <- sib.sum - parm.cn
+  sib.sum.less.m.even <- sib.sum.less.m %% 2 == 0
+  sib.sum.less.m.div2.ge0 <- sib.sum.less.m / 2 >= 0
+  sib.sum.less.m.div2.lef <- sib.sum.less.m / 2 <= parp.cn
+  ibd1p.conc <- sib.sum.less.m.even & sib.sum.less.m.div2.ge0 & sib.sum.less.m.div2.lef
+  
+  # IBD1M
+  sib.sum.less.p <- sib.sum - parp.cn
+  sib.sum.less.p.even <- sib.sum.less.p %% 2 == 0
+  sib.sum.less.p.div2.ge0 <- sib.sum.less.p / 2 >= 0
+  sib.sum.less.p.div2.lem <- sib.sum.less.p / 2 <= parm.cn
+  ibd1m.conc <- sib.sum.less.p.even & sib.sum.less.p.div2.ge0 & sib.sum.less.p.div2.lem
+  
+  site.concordance <- ifelse(ibd.state=='IBD0', sums.eq, ifelse(ibd.state=='IBD2', sib.eq, ifelse(ibd.state=='IBD1P', ibd1p.conc, ifelse(ibd.state=='IBD1M', ibd1m.conc, NA))))
+}
+
+# Perform concordance analysis on each cluster within each family
+conc.fam.bp <- ddply(bp, .(family, cluster), function(df) {
+  
+  conc.L <- concordance.stats(df, 'cn.L')
+  conc.R <- concordance.stats(df, 'cn.R')
+  
+  if (length(conc.L)==0 || is.na(conc.L)) {
+    return(data.frame())
+  } else {
+    return(data.frame(conc.L=conc.L, conc.R=conc.R, conc=conc.L&conc.R))
+  }
+})
+
+# Now what? Needs work here. How do you filter conc.fam.bp? What are the covariates?
+# We don't have the segment lengths. Perhaps I can filter on drops in CN?
 
