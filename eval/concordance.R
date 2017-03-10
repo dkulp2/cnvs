@@ -7,6 +7,12 @@ library(dplyr)
 library(ggplot2)
 library(RColorBrewer)
 library(sqldf)
+library(grid)
+library(magrittr)
+
+psegs <- read.table("C:\\cygwin64\\home\\dkulp\\data\\tmp\\profile_segments.txt")[,1:4]
+colnames(psegs) <- c('bin','chr','start','end')
+psegs[1,'start'] <- 1
 
 big2 <- 200  # any region greater than big2 nts that is CN=2 for all samples is replaced by a small region
 big2.replacement <- 5 # the size of the new CN=2 region
@@ -117,7 +123,7 @@ load.cnvs <- function(d) {
       if (length(adjacents) > 2) {
         adj.range <- 2:(length(adjacents)-1)
         tweens <- adjacents[adj.range]==adjacents[adj.range-1]+1 & adjacents[adj.range]==adjacents[adj.range+1]-1
-        stopifnot(all(!tweens)) # do a closure and remove tweens
+#        stopifnot(all(!tweens)) # do a closure and remove tweens
       }
       if (length(adjacents) > 0) {
         cat(sprintf("FIXME: Adjacent calls for %s with same CN\n", first(df$.id)))
@@ -175,8 +181,8 @@ ddply(quartets, .(family), function(fam) {
     sib1 <- arrange(filter(cnvs.sibs[[1]], .id==fam$sib1 & chr==chr), start.map)
     sib2 <- arrange(filter(cnvs.sibs[[2]], .id==fam$sib2 & chr==chr), start.map)
     if (nrow(sib1)>0 && nrow(sib2)>0) {
-      par1 <- arrange(filter(cnvs.parents[[2]], .id==fam$father & chr==chr), start.map) # By convention it appears that father is "D" data set and mother is "C"
-      par2 <- arrange(filter(cnvs.parents[[1]], .id==fam$mother & chr==chr), start.map)
+      par2 <- arrange(filter(cnvs.parents[[2]], .id==fam$father & chr==chr), start.map) # By convention it appears that father is "D" data set and mother is "C"
+      par1 <- arrange(filter(cnvs.parents[[1]], .id==fam$mother & chr==chr), start.map)
       stopifnot(nrow(par1)>0 && nrow(par2)>0)
       
       ibd.fam.chr <- arrange(filter(ibd.fam, CHR==chr), START)
@@ -220,6 +226,15 @@ colnames(segs) <- c('family','sib1','sib2','mother','father','chr','start','end'
 segs$sib.eq <- (segs$sib1.cn == segs$sib2.cn)
 segs$all.eq <- (segs$sib.eq & segs$sib1.cn==segs$par1.cn & segs$sib1.cn==segs$par2.cn)
 segs$sib.del <- segs$sib1.cn < 2 | segs$sib2.cn < 2
+segs$par.del <- segs$par1.cn < 2 | segs$par2.cn < 2
+segs$any.del <- segs$sib.del | segs$par.del
+segs$sib.dup <- segs$sib1.cn > 2 | segs$sib2.cn > 2
+segs$par.dup <- segs$par1.cn > 2 | segs$par2.cn > 2
+segs$any.dup <- segs$sib.dup | segs$par.dup
+segs$is.del <- segs$any.del & !segs$any.dup  # Bob's definition
+segs$cn.gt.4 <- segs$sib1.cn > 4 | segs$sib2.cn > 4 | segs$par1.cn > 4 | segs$par2.cn > 4 # 
+segs$bi.all <- !segs$any.del & segs$any.dup & !segs$cn.gt.4
+   
 segs$sib.wt <- segs$sib.eq & segs$sib1.cn == 2
 segs$all.wt <- segs$all.eq & segs$sib1.cn == 2
 segs$sib.sum <- segs$sib1.cn + segs$sib2.cn
@@ -276,41 +291,78 @@ segs$sums.eq <- segs$sib.sum == segs$par.sum
 #   ((CN1+CN2)-dCNm)%2 = 0 and ((CN1+CN2)-dCNm)/2 <= dCNp and ((CN1+CN2)-dCNm)/2 >= 0
 
 # IBD1P
-segs$sib.sum.less.m <- segs$sib.sum - segs$par2.cn
+segs$sib.sum.less.m <- segs$sib.sum - segs$par1.cn
 segs$sib.sum.less.m.even <- segs$sib.sum.less.m %% 2 == 0
 segs$sib.sum.less.m.div2.ge0 <- segs$sib.sum.less.m / 2 >= 0
-segs$sib.sum.less.m.div2.lef <- segs$sib.sum.less.m / 2 <= segs$par1.cn
+segs$sib.sum.less.m.div2.lef <- segs$sib.sum.less.m / 2 <= segs$par2.cn
 segs$ibd1p.conc <- segs$sib.sum.less.m.even & segs$sib.sum.less.m.div2.ge0 & segs$sib.sum.less.m.div2.lef
 
 # IBD1M
-segs$sib.sum.less.p <- segs$sib.sum - segs$par1.cn
+segs$sib.sum.less.p <- segs$sib.sum - segs$par2.cn
 segs$sib.sum.less.p.even <- segs$sib.sum.less.p %% 2 == 0
 segs$sib.sum.less.p.div2.ge0 <- segs$sib.sum.less.p / 2 >= 0
-segs$sib.sum.less.p.div2.lem <- segs$sib.sum.less.p / 2 <= segs$par2.cn
+segs$sib.sum.less.p.div2.lem <- segs$sib.sum.less.p / 2 <= segs$par1.cn
 segs$ibd1m.conc <- segs$sib.sum.less.p.even & segs$sib.sum.less.p.div2.ge0 & segs$sib.sum.less.p.div2.lem
 
 segs$concordant <- ifelse(segs$ibd.state=='IBD0', segs$sums.eq, ifelse(segs$ibd.state=='IBD2', segs$sib.eq, ifelse(segs$ibd.state=='IBD1P', segs$ibd1p.conc, segs$ibd1m.conc)))
 
-segs$cnv <- ifelse(segs$sib.del, 'DEL', ifelse(segs$sib.wt, 'WT', 'DUP'))
+segs$cnv <- ifelse(segs$is.del, 'DEL', ifelse(segs$bi.all, 'BI', ifelse(segs$all.wt, 'WT', 'MULTI')))
+#segs$cnv <- ifelse(segs$sib.del, 'DEL', ifelse(segs$all.wt, 'WT', 'OTHER')) # OLD DEFN
 segs$fam <- as.factor(segs$family)
 
 segs$len <- segs$end - segs$start
+
+# 3 regions that, by eye, have long, high frequency, discordant deletions 
+excl.ranges <- list(c(29400000,29600000),c(41200000,41300000),c(60500000,60550000))
+
+segs$excl <- with(segs,(start<29600000 & end>29400000)|(start<41300000 & end>41200000) | (start<60550000 & end>60500000))
+segs$excl.alpha <- with(segs,(start<29600000 & end>29400000))
+
+
+# assign bins
+bin.map <- function(pos) {
+  tmp.lines <- file()
+  ps.idx <- 1
+  idx <- 1
+  
+  while (idx <= length(pos)) {
+    while (psegs$end[ps.idx] < pos[idx]) { ps.idx <- ps.idx + 1 }
+    stopifnot(psegs$start[ps.idx] <= pos[idx])
+    cat(psegs$bin[ps.idx], "\n", file=tmp.lines)
+    idx <- idx + 1
+  }
+  
+  m <- read.table(tmp.lines)
+  close(tmp.lines)
+  return(m$V1)
+  
+}
+
+segs <- arrange(segs, chr, start)
+segs$start.bin <- bin.map(segs$start)
+
+segs <- arrange(segs, chr, end)
+segs$end.bin <- bin.map(segs$end)
+
 segs <- arrange(segs, family, chr, start)
 
+
+
 # display density of CNVs
-lapply(unique(segs$chr), function(chr) {
-  z <- unlist(dlply(filter(segs, !all.wt & chr==chr), .(family, chr, start), function(r) seq(r$start,r$end)), use.names = FALSE)
-  print(plot(density(z), main=sprintf("Density of CNVs along chr %s", chr)))
-})
-# display location of CNVs. Only the largest CNVs are visible
-print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
+# lapply(unique(segs$chr), function(chr) {
+#   z <- unlist(dlply(filter(segs, !all.wt & chr==chr), .(family, chr, start), function(r) seq(r$start,r$end)), use.names = FALSE)
+#   print(plot(density(z), main=sprintf("Density of CNVs along chr %s", chr)))
+# })
+# # display location of CNVs. Only the largest CNVs are visible
+# print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
+
 
 
 # scan through all segments simultaneously
 # If we are all overlapping a CN=2 and it is big, then reduce its length for all
 
 group.sz <- 20
-group.seq <- seq(1,100,group.sz)
+group.seq <- seq(1,length(unique(segs$family)),group.sz)
 
 segs.group <-
 lapply(group.seq, function(x) {
@@ -364,6 +416,8 @@ lapply(group.seq, function(x) {
       
       # iterate through new segments and adjust start and end according to new length
       final.segs <- ddply(new.segs, .(family), function(df) {
+        df$old.start <- df$start
+        df$old.end <- df$end
         df$end <- cumsum(df$len) - 1
         df$start <- c(1, df$end[1:(nrow(df)-1)])
         df
@@ -374,24 +428,151 @@ lapply(group.seq, function(x) {
   
 })
 
-#pdf("concordance.pdf")
-MIN.OVLP.LEN <- 400
+pdf("concordance.pdf")
+MIN.OVLP.LEN <- 2000
 sapply(segs.group, function(df) {
-  print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) + 
-          geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\nseg > ",MIN.OVLP.LEN)))
+ print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN & cnv!='WT'), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) +
+     geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
+#  print(ggplot(filter(df, !is.na(ibd.state) & len>MIN.OVLP.LEN & !all.wt & cnv!='WT' & cnv=='DEL' & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
+#          geom_segment(size=2) + geom_point() + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
 })
-#dev.off()
+dev.off()
 
 # count concordance by base
-cts <-
-  ldply(seq(0,max(segs$len[!segs$all.wt]),100), function(len.min) {
-    ddply(filter(segs, !is.na(ibd.state) & len > len.min), .(cnv), function(df) {
-      mutate(data.frame(len.min,tot.bases=sum(as.numeric(df$len)), conc.bases=sum(as.numeric(df$len[df$concordant]))), conc.pct=conc.bases/tot.bases)
-    })
-  })
+len.max <- 20000
+len.min.disp <- 1200
+#steps <- c(seq(0,5000,100), seq(6000,len.max,1000))
+steps <- c(seq(0,50,1), seq(60,len.max/100,10))
 
-#ggplot(filter(cts, cnv!='WT'), aes(x=len.min, y=conc.pct)) + geom_line() + facet_grid(.~cnv)
-ggplot(filter(cts, cnv=='DEL'), aes(x=len.min, y=conc.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By Base For Deletions")
+cts <- function(segs.subset) {
+  ldply(steps, function(len.min) {
+    z <- ddply(filter(segs.subset, !is.na(ibd.state) & end.bin-start.bin > len.min), .(cnv), function(df) {
+#    z <- ddply(filter(segs.subset, !is.na(ibd.state) & len > len.min), .(cnv), function(df) {
+      mutate(data.frame(len.min,tot.bases=sum(as.numeric(df$len)), 
+                        conc.bases=sum(as.numeric(df$len[df$concordant])),
+                        ncnv=nrow(df), 
+                        conc.cnv=sum(df$concordant)), 
+             conc.base.pct=conc.bases/tot.bases,
+             conc.cnv.pct=conc.cnv/ncnv)
+    })
+    if (nrow(z)==0) { return(data.frame())} else { return(z)}
+  })
+}
+
+
+all.cts <- mutate(cts(segs), family='ALL', grp='All')
+all.cts.m2 <- mutate(cts(filter(segs, !(family %in% c(11711, 11393)))), family='ALL', grp='All but 2')
+all.cts2 <- mutate(cts(filter(segs, !excl)), family='ALL', grp='No Big 3')
+all.cts2a <- mutate(cts(filter(segs, !excl.alpha)), family='ALL', grp='No Alpha')
+
+all.cts3 <- rbind(all.cts, all.cts.m2, all.cts2, all.cts2a)
+
+
+
+p1c <- ggplot(filter(all.cts3, cnv %in% c('DEL')), aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")
+print(p1c)
+# print(p1c + xlim(500,5000) + coord_cartesian(ylim=c(0.7,1)))
+print(p1c + xlim(5,50) + coord_cartesian(ylim=c(0.7,1)) + xlab("Min Segment Size (Bins)"))
+
+p1b <- ggplot(filter(all.cts, cnv %in% c('DEL')), aes(x=len.min, y=conc.base.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By Base")
+
+quartet.cts <-
+  ldply(quartets$family, function(f) {
+    mutate(cts(filter(segs, family==f)), family=f, grp='All')
+  })
+q.cts2a <- ldply(quartets$family, function(f) {
+  mutate(cts(filter(segs, family==f & !excl.alpha)), family=f, grp='No Alpha')
+})
+cts.m <- rbind(quartet.cts, all.cts)
+
+
+fams <- unique(segs$family)
+pdf("quartets.pdf")
+sapply(seq(1,length(fams),6), function(f) {
+  p1g <- ggplot(filter(quartet.cts, family %in% fams[f:(f+5)] & cnv=='DEL'), aes(x=len.min, y=conc.cnv.pct,group=family)) + geom_point() +geom_line()+ facet_grid(family+cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")
+  print(p1g)
+})
+dev.off()
+
+
+p2 <- ggplot(filter(all.cts, cnv=='DEL' & len.min > len.min.disp), aes(x=len.min, y=ncnv)) + geom_point() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Number of CNVs") + ggtitle("Quartet CNV Count")
+
+
+# as smaller segments are removed, would the flanking segments be merged because they're the same CN?
+# for each family, iteratively remove segments below a minimum length, and then check the flanking genotypes for remaining
+segs2 <- ddply(segs, .(family), function(df) {
+  # df <- filter(segs, family==11006)
+  cat(df$family[1],"\n")
+  ldply(seq(len.min.disp,len.max,100), function(len.min) {
+    # len.min <- 500
+    df2 <- filter(df, len > len.min)
+    idx <- 2:nrow(df2)
+    df2$sib1.adj.eq <- c(df2$sib1.cn[idx] == df2$sib1.cn[idx+1] ,NA)  
+    df2$sib2.adj.eq <- c(df2$sib2.cn[idx] == df2$sib2.cn[idx+1] ,NA)  
+    df2$par1.adj.eq <- c(df2$par1.cn[idx] == df2$par1.cn[idx+1] ,NA)  
+    df2$par2.adj.eq <- c(df2$par2.cn[idx] == df2$par2.cn[idx+1] ,NA)  
+    df2$all.adj.eq <- df2$sib1.adj.eq & df2$sib2.adj.eq & df2$par1.adj.eq & df2$par2.adj.eq
+    df2$len.min <- len.min
+    df2
+  })
+})
+
+
+
+# define "CNV region" as the chromosome segment that's flanked by wild type genotypes, i.e. CN=2 for all samples.
+# collect stats on these regions as minimum length increases. How many CNVs and CNV regions?
+# Ideally, as the minimum length increases, the ratio of CNVs to CNV regions approaches one.
+cnv.regs <- function(s,grp) {
+  mutate(ddply(s, .(family), function(df) {
+    # df <- filter(segs, family==11835)
+    ldply(steps, function(len.min) {
+      df2 <- filter(df, len > len.min)
+      df2$all.wt.adj <- c(FALSE, df2$all.wt[2:nrow(df2)] & df2$all.wt[1:(nrow(df2)-1)])
+      
+      # the number of regions is the number of WT CNVs minus one (due to boundary)
+      cnv.region.ct <- sum(df2$all.wt) - sum(df2$all.wt.adj) - 1
+      
+      # the number of CNVs is all rows that are not WTs
+      cnv.ct <- sum(!df2$all.wt)
+      
+      # concordant CNVs
+      cnv.conc.ct <- sum(df2$concordant[!df2$all.wt], na.rm=TRUE)
+      
+      data.frame(len.min=len.min, cnv.region.ct=cnv.region.ct, cnv.ct=cnv.ct, cnv.conc.ct=cnv.conc.ct)
+    })
+  }), fam=as.factor(family), grp=grp)
+}
+
+cnv.regs1 <- cnv.regs(segs,'ALL but 2')
+cnv.regs2 <- cnv.regs(filter(segs, !excl.alpha),'No Alpha')
+cnv.regs3 <- cnv.regs(filter(segs, !excl), 'No Big 3')
+
+cnv.regs123 <- rbind(mutate(cnv.regs1, grp='ALL'), filter(rbind(cnv.regs1, cnv.regs2, cnv.regs3), !(family %in% c(11711, 11393))))
+
+cnv.regs.all <- ddply(cnv.regs123, .(len.min,grp), summarize, cnv.region.ct=sum(cnv.region.ct), cnv.ct=sum(cnv.ct), cnv.conc.ct=sum(cnv.conc.ct))
+cnv.regs.all$gt.1200 <- cnv.regs.all$len.min >= 1200
+cnv.regs.all$conc <- with(cnv.regs.all, cnv.conc.ct/cnv.ct)
+cnv.regs.all$conc.ranges <- cut(cnv.regs.all$conc, c(0,0.8,0.85,0.9,0.95,1))
+
+p4 <- ggplot(cnv.regs.all, aes(x=len.min, y=cnv.region.ct/cnv.ct,color=grp)) + geom_line() + ggtitle("Regions / CNVs")
+print(p4)
+print(p4 + xlim(500,5000) + coord_cartesian(ylim=c(0.7,1)))
+
+#print(p4 + geom_point(aes(size=conc.ranges)) + xlim(500,5000) + coord_cartesian(ylim=c(0.7,1)))
+ggplot(cnv.regs.all, aes(y=cnv.region.ct, x=cnv.ct, group=grp, color=gt.1200)) + geom_point() + geom_line() + ggtitle("Regions vs CNVs")
+ggplot(cnv.regs.all, aes(y=cnv.region.ct, x=cnv.ct, color=grp)) + geom_point() + geom_line() + ggtitle("Regions vs CNVs")
+
+ggplot(cnv.regs1, aes(x=len.min, y=cnv.region.ct/cnv.ct, color=fam)) + geom_point() + geom_line() + guides(color=FALSE)  + facet_wrap(~fam)
+
+
+segs2.ct <- mutate(ddply(filter(segs2, !is.na(all.adj.eq)), .(len.min), summarize, tot=length(all.adj.eq), all.adj.eq=sum(all.adj.eq), frac.eq=all.adj.eq/tot), cnv='DEL')
+#ggplot(segs2.ct, aes(x=len.min, y=all.adj.eq)) + geom_point()
+p3 <- ggplot(segs2.ct, aes(x=len.min, y=frac.eq)) + geom_point() + xlab("Min Segment Size") + ylab("Fraction of Segments") + ggtitle("Segments with Identical Flanking CN") + facet_grid(cnv~.)
+
+grid.newpage()
+XL <- xlim(len.min.disp, 20000)
+grid.draw(rbind(ggplotGrob(p1+XL), ggplotGrob(p2+XL), ggplotGrob(p3+XL), size = "last"))
+
 
 ggplot(filter(segs, len>2000 & cnv=='DEL' & !is.na(concordant)), aes(x=start, y=fam, xend=end, yend=fam)) + geom_point() + geom_segment() + geom_point(aes(x=end)) + facet_grid(concordant+cnv~.) + ggtitle("segments > 2000 nt")
 
