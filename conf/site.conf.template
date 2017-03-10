@@ -1,6 +1,6 @@
 # This configuration file contains host-specific parameters
 
-export ROOT=/home/dkulp/data
+export ROOT=${HOME}/data
 
 # External input data
 export profileFile=${ROOT}/gpc_wave2_batch1/profile_seq_20_100.dat.gz
