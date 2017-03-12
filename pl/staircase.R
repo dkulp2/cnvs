@@ -43,7 +43,7 @@ csm <- subset(csm, !is.na(cn) | len > 4*max.join)
 csm <- ddply(csm, .(.id, chr), function(df) {
   # the first row of a pair of adjacent rows with the same CN
   idx <- 1:(nrow(df)-1)
-  adj <- (df$cn[idx] == df$cn[idx+1] & (df$cn[idx]==2 | df$start.map[idx+1]-df$end.map[idx] < max.join))
+  adj <- df$cn[idx] == df$cn[idx+1]
   while (any(adj, na.rm=TRUE)) {
     adj.idx <- first(which(adj))
     df[adj.idx, 'end.i'] <- df[adj.idx+1, 'end.i']
@@ -51,7 +51,7 @@ csm <- ddply(csm, .(.id, chr), function(df) {
     df[adj.idx, 'label'] <- paste0(df[adj.idx, 'label'], '_', df[adj.idx+1, 'label'])
     df <- df[-c(adj.idx+1),]
     idx <- 1:(nrow(df)-1)
-    adj <- (df$cn[idx] == df$cn[idx+1] & (df$cn[idx]==2 | df$start.map[idx+1]-df$end.map[idx] < max.join))
+    adj <- df$cn[idx] == df$cn[idx+1]
   } 
   df$len <- df$end.map - df$start.map 
   return(df)
