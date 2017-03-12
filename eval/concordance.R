@@ -19,10 +19,15 @@ big2.replacement <- 5 # the size of the new CN=2 region
 MIN.CNV.LEN <- 1200
 
 # load data ########################
-basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.run2'
+# basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI'
+# 
+# sibs <- c('data_sfari_batch1a','data_sfari_batch1b')
+# parents <- c('data_sfari_batch1c','data_sfari_batch1d')
 
-sibs <- c('data_sfari_batch1a','data_sfari_batch1b')
-parents <- c('data_sfari_batch1c','data_sfari_batch1d')
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.10Mar2017_test'
+
+sibs <- c('dataA','dataB')
+parents <- c('dataC','dataD')
 
 ibd.bed.fn <- sprintf("%s/merged_ibd_regions.bed", basedir)
 ped.fn <- sprintf("%s/sample_pedigrees.ped", basedir)
@@ -117,7 +122,7 @@ load.cnvs <- function(d) {
         row.range <- 2:nrow(df)
       }
       
-      # sometimes the same CN has adjacent segments. 2/28/17 this bug is fixed and shouldn't occur
+      # sometimes the same CN has adjacent segments.
       adjacents <- which(df$start.map[row.range]==df$end.map[row.range-1] &
                            df$cn[row.range]==df$cn[row.range-1]) + 1
       if (length(adjacents) > 2) {
@@ -348,98 +353,133 @@ segs <- arrange(segs, family, chr, start)
 
 
 
-# display density of CNVs
-# lapply(unique(segs$chr), function(chr) {
-#   z <- unlist(dlply(filter(segs, !all.wt & chr==chr), .(family, chr, start), function(r) seq(r$start,r$end)), use.names = FALSE)
-#   print(plot(density(z), main=sprintf("Density of CNVs along chr %s", chr)))
-# })
-# # display location of CNVs. Only the largest CNVs are visible
-# print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
-
 
 
 # scan through all segments simultaneously
 # If we are all overlapping a CN=2 and it is big, then reduce its length for all
 
-group.sz <- 20
-group.seq <- seq(1,length(unique(segs$family)),group.sz)
 
-segs.group <-
-lapply(group.seq, function(x) {
-  all.cn2 <- list()  # each element is a vector of row indices, one for each sample
-  remove.nt <- list() # amount to remove
-
-  segs2 <-
-    ddply(filter(segs, family %in% quartets$family[x:(x+group.sz-1)]), .(chr), function(segs.chr) {
-      segs.chr.fam <- dlply(segs.chr, .(family), identity)
-      num.fams <- length(segs.chr.fam)
-      fam.row <- rep(1, num.fams)
-      pos <- 1
-      while (!is.na(pos) && pos < max(segs.chr$end)) {
-        rows <- ldply(1:num.fams, function(i) { return(data.frame(family=names(segs.chr.fam)[i],
-                                                                  ends=segs.chr.fam[[i]]$end[fam.row[i]], 
-                                                                  starts=segs.chr.fam[[i]]$start[fam.row[i]], 
-                                                                  len=segs.chr.fam[[i]]$len[fam.row[i]],
-                                                                  cn2=(segs.chr.fam[[i]]$all.eq[fam.row[i]] & segs.chr.fam[[i]]$sib1.cn[fam.row[i]]==2))) })
-        min.end <- min(rows$ends)
-        max.start <- max(rows$starts)
-        match.min.end <- rows$ends==min.end
-        
-        if (min.end - pos > big2 & all(rows$cn2)) {
-          # push the row indices for all samples
-          all.cn2[[length(all.cn2)+1]] <- fam.row
+mk.segs.group <- function(group.sz) {
+  group.seq <- seq(1,length(unique(segs$family)),group.sz)
+  lapply(group.seq, function(x) {
+    all.cn2 <- list()  # each element is a vector of row indices, one for each sample
+    remove.nt <- list() # amount to remove
+    
+    segs2 <-
+      ddply(filter(segs, family %in% quartets$family[x:(x+group.sz-1)]), .(chr), function(segs.chr) {
+        segs.chr.fam <- dlply(segs.chr, .(family), identity)
+        num.fams <- length(segs.chr.fam)
+        fam.row <- rep(1, num.fams)
+        pos <- 1
+        while (!is.na(pos) && pos < max(segs.chr$end)) {
+          rows <- ldply(1:num.fams, function(i) { return(data.frame(family=names(segs.chr.fam)[i],
+                                                                    ends=segs.chr.fam[[i]]$end[fam.row[i]], 
+                                                                    starts=segs.chr.fam[[i]]$start[fam.row[i]], 
+                                                                    len=segs.chr.fam[[i]]$len[fam.row[i]],
+                                                                    cn2=(segs.chr.fam[[i]]$all.eq[fam.row[i]] & segs.chr.fam[[i]]$sib1.cn[fam.row[i]]==2))) })
+          min.end <- min(rows$ends)
+          max.start <- max(rows$starts)
+          match.min.end <- rows$ends==min.end
           
-          # push the number of bases to remove 
-          remove.nt[[length(remove.nt)+1]] <- (min.end-pos)-big2.replacement
+          if (min.end - pos > big2 & all(rows$cn2)) {
+            # push the row indices for all samples
+            all.cn2[[length(all.cn2)+1]] <- fam.row
+            
+            # push the number of bases to remove 
+            remove.nt[[length(remove.nt)+1]] <- (min.end-pos)-big2.replacement
+          }
+          
+          # advance the row index for those families that match the right edge of the current overlap region
+          fam.row[match.min.end] <- fam.row[match.min.end]+1
+          
+          # advance pointer
+          pos <- min.end
         }
         
-        # advance the row index for those families that match the right edge of the current overlap region
-        fam.row[match.min.end] <- fam.row[match.min.end]+1
         
-        # advance pointer
-        pos <- min.end
-      }
-      
-      
-      # return a new set of data.frames for this chromosome after reducing the length of rows in all.cn2
-      # I subtract by the specified amount (instead of setting to a fixed length) because the same quartet segment
-      # might be part of more than one consecutive all.cn2 region because of a change in ibd.state for one of the quartets.
-      # So the length of the all.cn2 regions may be a multiple o big2.replacement.
-      new.segs <- ldply(1:num.fams, function(f) {
-        cat(names(segs.chr.fam)[f],' ')
-        sapply(1:length(all.cn2), function(idx) {
-          segs.chr.fam[[f]][all.cn2[[idx]][f],'len'] <<- segs.chr.fam[[f]][all.cn2[[idx]][f],'len'] - remove.nt[[idx]]
+        # return a new set of data.frames for this chromosome after reducing the length of rows in all.cn2
+        # I subtract by the specified amount (instead of setting to a fixed length) because the same quartet segment
+        # might be part of more than one consecutive all.cn2 region because of a change in ibd.state for one of the quartets.
+        # So the length of the all.cn2 regions may be a multiple o big2.replacement.
+        new.segs <- ldply(1:num.fams, function(f) {
+          cat(names(segs.chr.fam)[f],' ')
+          sapply(1:length(all.cn2), function(idx) {
+            segs.chr.fam[[f]][all.cn2[[idx]][f],'len'] <<- segs.chr.fam[[f]][all.cn2[[idx]][f],'len'] - remove.nt[[idx]]
+          })
+          segs.chr.fam[[f]]
         })
-        segs.chr.fam[[f]]
+        cat("\n")
+        
+        # iterate through new segments and adjust start and end according to new length
+        final.segs <- ddply(new.segs, .(family), function(df) {
+          df$old.start <- df$start
+          df$old.end <- df$end
+          df$end <- cumsum(df$len) - 1
+          df$start <- c(1, df$end[1:(nrow(df)-1)])
+          df
+        })
+        
+        return(final.segs)  
       })
-      cat("\n")
-      
-      # iterate through new segments and adjust start and end according to new length
-      final.segs <- ddply(new.segs, .(family), function(df) {
-        df$old.start <- df$start
-        df$old.end <- df$end
-        df$end <- cumsum(df$len) - 1
-        df$start <- c(1, df$end[1:(nrow(df)-1)])
-        df
-      })
-      
-      return(final.segs)  
-    })
+    
+  })
   
-})
+} 
+segs.group <- mk.segs.group(20)
+segs.all <- mk.segs.group(100)
 
 pdf("concordance.pdf")
-MIN.OVLP.LEN <- 2000
+MIN.OVLP.LEN <- 1400
 sapply(segs.group, function(df) {
  print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN & cnv!='WT'), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) +
      geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
-#  print(ggplot(filter(df, !is.na(ibd.state) & len>MIN.OVLP.LEN & !all.wt & cnv!='WT' & cnv=='DEL' & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
-#          geom_segment(size=2) + geom_point() + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
 })
 dev.off()
 
-# count concordance by base
-len.max <- 20000
+sa1 <- filter(segs.all[[1]], !is.na(ibd.state) & cnv=='DEL')
+print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
+        geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)))
+
+# display density of CNVs
+z2<-
+  ldply(c(TRUE,FALSE), function(conc) {
+    ldply(c(1500,2000,5000), function(nt.len.min){
+      cat(conc,nt.len.min,"\n")
+      data.frame(conc=conc, min.len=nt.len.min, location=unlist(dlply(filter(sa1, len>nt.len.min & concordant==conc), .(family, chr, start), function(r) seq(r$old.start,r$old.end)), use.names = FALSE))
+    })
+  })
+#print(plot(density(z), main=sprintf("Density of CNVs >%snt chr 20",MIN.OVLP.LEN)))
+#z2$min.length <- as.factor(z2$min.len)
+#ggplot(z2, aes(x=location, color=min.length)) + geom_density()
+z3 <- tally(group_by(z2, min.len, conc, location))
+ggplot(filter(z3), aes(x=location, y=n, color=conc)) + geom_step() + facet_grid(min.len+conc~., scales = "free_y")
+
+# display location of CNVs. Only the largest CNVs are visible
+#print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
+
+# manually select the top 8 regions
+z4 <- filter(z3, min.len==2000)
+z4p <- function(z, a,b, i) {
+  print(ggplot(z, aes(x=location, y=n, color=conc)) +geom_point() + xlim(a,b) + ylab('n') + xlab('pos') + ggtitle(sprintf("#%s Chr 20:%s-%s (%snt)",i, a,b,b-a)))
+}
+bad.loci <- list(
+  c(6.05195e7,6.05235e7,1),
+  c(4.1243e7,4.125e7,2),
+  c(2.606e7,2.6074e7,3),
+  c(2.9493e7,2.951e7,4),
+  c(3.709e7,3.7095e7,5),
+  c(1.2341e7, 1.23445e7,6),
+  c(5.4325e6,5.4355e6,7),
+  c(1.585e6,1.592e6,8))
+
+pdf("discordant_loci.pdf")
+lapply(bad.loci, function(ab) {
+  z4p(z4, ab[1],ab[2], ab[3])
+})
+dev.off()
+
+# count concordance by base and cnv
+len.max <- 15000
 len.min.disp <- 1200
 #steps <- c(seq(0,5000,100), seq(6000,len.max,1000))
 steps <- c(seq(0,50,1), seq(60,len.max/100,10))
@@ -459,22 +499,107 @@ cts <- function(segs.subset) {
   })
 }
 
+diff.cts <- function(x) {
+  idx <- 1:(length(x)-1)
+  return(c(x[idx]-x[idx+1],x[length(x)]))  
+}
+
+bin.cts.df <- function(df) {
+  ddply(df, .(grp, family, cnv), 
+        mutate, tot.bases.bin=diff.cts(tot.bases), conc.bases.bin=diff.cts(conc.bases),
+        ncnv.bin=diff.cts(ncnv), conc.cnv.bin=diff.cts(conc.cnv), disc.cnv.bin=ncnv.bin-conc.cnv.bin)
+        
+}
+
+# compute a normalized area under the curve given the points (x,y)
+# Assume that y is [0,1], x is arbitrary.
+auc <- function(x,y) {
+  return(sum(diff(x)*rollmean(y,2))/(x[length(x)]-x[1]))
+}
+
 
 all.cts <- mutate(cts(segs), family='ALL', grp='All')
+
+# remove segments from df that overlap range ab
+excl.loci <- function(df,ab) {
+  filter(df, !(start < ab[2] & end > ab[1]))
+}
+
+# generate cts for each bad loci independently that can be plotted or used for AUC
+rocs <- llply(bad.loci, function(ab) {
+  mutate(cts(excl.loci(segs,ab)),grp=sprintf("All but #%s (20:%s-%s)",ab[3],ab[1],ab[2]))
+})
+rocs[['All']] <- mutate(cts(segs),grp="All")
+rocs.hold1 <- do.call(rbind, rocs)
+rocs.hold1$all <- rocs.hold1$grp=='All'
+ggplot(filter(rocs.hold1, cnv %in% c('DEL')), 
+             aes(x=len.min, y=conc.cnv.pct, color=grp, size=all))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) + guides(size="none")
+
+# generate AUC for each of the "hold one out" ROCs
+auc.res <- ldply(rocs, function(df) {
+  ddply(df, .(cnv,grp), summarize, auc=auc(len.min, conc.cnv.pct))
+})
+
+# Ranking the results by their independent impact on AUC for DELs
+# > auc.res %>% filter(cnv=='DEL') %>% arrange(auc)
+# .id cnv                       grp       auc
+# 1     DEL   All but 1585000-1592000 0.9646529
+# 2 All DEL                       All 0.9726434
+# 3     DEL All but 12341000-12344500 0.9728125
+# 4     DEL   All but 5432500-5435500 0.9729876
+# 5     DEL All but 41243000-41250000 0.9733802
+# 6     DEL All but 37090000-37095000 0.9743372
+# 7     DEL All but 60519500-60523500 0.9744237
+# 8     DEL All but 29493000-29510000 0.9749306
+# 9     DEL All but 26060000-26074000 0.9758405
+
+
+excl.order <- rev(c(6,7,2,5,1,4,3))
+
+# put #5 first
+excl.order <- rev(c(6,7,2,1,4,3,5))
+
+segs.ex <- list(segs)
+lapply(excl.order, function(i) {
+  segs.ex[[length(segs.ex)+1]] <<- excl.loci(segs.ex[[length(segs.ex)]], bad.loci[[i]])  
+})
+excl.label <- c('All', sprintf('All but %s', excl.order[1]))
+lapply(excl.order[2:length(excl.order)], function(i) {
+  excl.label <<- c(excl.label, sprintf("%s&%s", excl.label[length(excl.label)],i))
+})
+
+rocs2 <- ldply(1:length(excl.label), function(i) {
+  mutate(cts(segs.ex[[i]]),grp=excl.label[i])
+})
+
+p5 <- ggplot(filter(rocs2, cnv %in% c('DEL')), 
+             aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
+print(p5)
+print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)) + ggtitle("Rank #5 first"))
+
+
 all.cts.m2 <- mutate(cts(filter(segs, !(family %in% c(11711, 11393)))), family='ALL', grp='All but 2')
 all.cts2 <- mutate(cts(filter(segs, !excl)), family='ALL', grp='No Big 3')
 all.cts2a <- mutate(cts(filter(segs, !excl.alpha)), family='ALL', grp='No Alpha')
 
 all.cts3 <- rbind(all.cts, all.cts.m2, all.cts2, all.cts2a)
 
+ddply(all.cts3, .(grp,cnv), function(df) auc(df$len.min, df$conc.cnv.pct))
 
 
-p1c <- ggplot(filter(all.cts3, cnv %in% c('DEL')), aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")
+
+p1c <- ggplot(filter(all.cts3, cnv %in% c('DEL')), aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
 print(p1c)
 # print(p1c + xlim(500,5000) + coord_cartesian(ylim=c(0.7,1)))
 print(p1c + xlim(5,50) + coord_cartesian(ylim=c(0.7,1)) + xlab("Min Segment Size (Bins)"))
 
-p1b <- ggplot(filter(all.cts, cnv %in% c('DEL')), aes(x=len.min, y=conc.base.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By Base")
+p1b <- ggplot(filter(all.cts, cnv %in% c('DEL')), aes(x=len.min, y=conc.base.pct)) + geom_point() + geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size (Bins)") + ylab("Concordance") + ggtitle("Quartet Concordance By Base")
+print(p1b)
+
+all.cts3.bin <- bin.cts.df(all.cts3)
+
+p1f <- ggplot(filter(all.cts3.bin, cnv %in% c('DEL')), aes(x=len.min, y=disc.cnv.bin, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Segment Size (Bin)") + ylab("# Discordant CNVs") + ggtitle("CNV Discordance By Length")  + geom_vline(xintercept = 12, linetype=2)
+print(p1f + xlim(5,60) + coord_cartesian(ylim=c(0,50)))
 
 quartet.cts <-
   ldply(quartets$family, function(f) {
