@@ -7,7 +7,6 @@
 #
 # Usage: gunzip -c windows.vcf.gz | vcf2tab > windows.dat
 
-my $j = 1;
 while (<>) {
     next if /^\#\#/;
     if (/^\#/) {
@@ -16,7 +15,7 @@ while (<>) {
 	print "BIN\tCHR\tSTART\tEND\tPASS\t",join("\t",@fields[9..$#fields]),"\t",join("\t",@fieldsQual[9..$#fieldsQual]),"\n";
     } else {
 	@fields = split;
-	(undef, $chr, $start, $end) = split(/_/, $fields[2]);
+	(undef, $chr, $bin, $start, $end) = split(/_/, $fields[2]);
 	@geno = ();
 	@qual = ();
 	my $pass = 0;  # FT = PASS or LQ
@@ -27,6 +26,6 @@ while (<>) {
 	    push(@geno, $CN);
 	    push(@qual, $CNQ);
 	}
-	print "B$j\t$chr\t$start\t$end\t",$pass,"\t",join("\t",@geno),"\t",join("\t",@qual),"\n";
+	print "$bin\t$chr\t$start\t$end\t",$pass,"\t",join("\t",@geno),"\t",join("\t",@qual),"\n";
     }
 }
