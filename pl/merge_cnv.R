@@ -3,6 +3,7 @@ library(dplyr)
 library(tidyr)
 library(stats)
 library(zoo)
+library(RPostgreSQL)
 
 # a rough filter by eye to remove high variance regions
 # drop if variance of median CN over 9 windows is > 0.3 or a window's median is > 3 
@@ -163,21 +164,39 @@ cat(sprintf("Writing R objects to %s*.Rdata\n",cnv.seg.fn))
 save(cn.segs, file=sprintf("%s.cs.Rdata",cnv.seg.fn))
 save(cn.segs.merged, file=sprintf("%s.csm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+db <- src_postgres()
+if (dbExistsTable(db$con, "cnv_mrg")) { dbGetQuery(db$con, "DROP TABLE cnv_mrg") }
+dbWriteTable(db$con, "cnv_mrg", select(cn.segs.merged, .id, seg, chr, start.map, end.map, cn, copy.number))
+dbGetQuery(db$con, "CREATE INDEX on cnv_mrg(chr, \"start.map\", \"end.map\", \".id\")")
+
 save(cnv.geno, file=sprintf("%s.cg.Rdata",cnv.seg.fn))
 
-cn <- cnv.geno[,c(2:4,6:(5+sample.count))]
-cn2 <- gather(cn,sample,cn,-CHR,-START,-END)
+cn <- cnv.geno[,c(1:4,6:(5+sample.count))]
+cn2 <- gather(cn,sample,cn,-BIN,-CHR,-START,-END)
 
-cnq <- cnv.geno[,c(2:4,(6+sample.count):(ncol(cnv.geno)-2))]
-cnq2 <- gather(cnq,sample,cnq,-CHR,-START,-END)
+cnq <- cnv.geno[,c(1:4,(6+sample.count):(ncol(cnv.geno)-2))]
+cnq2 <- gather(cnq,sample,cnq,-BIN,-CHR,-START,-END)
 
 cnv.geno <- cbind(cn2, cnq=cnq2$cnq)
+
+colnames(cnv.geno) <- c('bin','chr','start_pos','end_pos', 'sample','cn')
+cnv.geno$bin <- as.integer(cnv.geno$bin)
+cnv.geno$chr <- as.character(cnv.geno$chr)
+cnv.geno$cn <- as.integer(cnv.geno$cn)
+
 rm(cn,cn2,cnq,cnq2)
 
 cnv.geno.exploded.fn <- sprintf("%s.cnvgeno.txt",cnv.seg.fn)
 cat(sprintf("Writing %s exploded genotype calls to %s\n",nrow(cnv.geno),cnv.geno.exploded.fn))
 colnames(cnv.geno) <- c('chr','start','end','sample','cn','cnq')
 write.table(cnv.geno, file=cnv.geno.exploded.fn, quote=FALSE, sep="\t", row.names=FALSE)
+
+cat(sprintf("Writing %s exploded genotype calls to table geno\n",nrow(cnv.geno)))
+if (dbExistsTable(db$con, "geno")) { dbGetQuery(db$con, "DROP TABLE geno") }
+dbWriteTable(db$con, "geno", cnv.geno)
+dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin)")
+
 
 write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.mrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
 

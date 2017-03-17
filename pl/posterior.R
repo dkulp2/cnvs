@@ -36,9 +36,7 @@ load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 cnvs <- as.tbl(cn.segs.merged)
 
 # connect to DB
-db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
-names(db.conn.params) <- c('user','host','port','dbname')
-db <- do.call(src_postgres, db.conn.params)
+db <- src_postgres()
 
 dbGetQuery(db$con, "BEGIN TRANSACTION")
 
@@ -221,14 +219,14 @@ dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','pos','
 
 
 dbCommit(db$con)
-dbSendQuery(db$con, "VACUUM ANALYZE posterior")
+dbGetQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
-if (dbExistsTable(db$con, "cnvs")) { dbGetQuery(db$con, "DROP TABLE cnvs") }
-dbWriteTable(db$con, "cnvs", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.best.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.best.bin","end.binCI.L","end.binCI.R")]))
+if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle") }
+dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.best.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.best.bin","end.binCI.L","end.binCI.R")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
-cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnvs c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
+cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
 cn.segs.merged <- cnvs.post
 
 # save
@@ -236,6 +234,10 @@ save(cn.segs.merged, file=sprintf("%s.bayescsm.Rdata",cnv.seg.fn))
 cn.segs.merged$copy.number <- addNA(as.factor(cn.segs.merged$cn))
 write.table(select(cn.segs.merged, .id, label, chr, start.CI.L, as.integer(start.map), start.CI.R, end.CI.L, as.integer(end.map), end.CI.R, copy.number), file=sprintf("%s.bayesCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
+# write new posterior version to db
+if (dbExistsTable(db$con, "cnv_post")) { dbGetQuery(db$con, "DROP TABLE cnv_post") }
+dbWriteTable(db$con, "cnv_post", cn.segs.merged)
+dbGetQuery(db$con, "CREATE INDEX on cnv_post(chr, \"start.map\", \"end.map\", \".id\")")
 
 dbDisconnect(db$con)
 
