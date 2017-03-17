@@ -10,4 +10,14 @@ export gscnvFile=${ROOT}/gpc_wave2/gs_cnv.genotypes.vcf.gz
 export referenceFile=${ROOT}/references/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta
 
 # Database connection
-export DBCONN=dkulp:localhost:5432:seq
+export PGUSER=dkulp
+export PGHOST=localhost
+export PGPORT=5432
+export PGDATABASE=seq
+
+export TMPDIR="/tmp"
+
+# Note: when run from Rstudio, the SHELL must be set to the non-cygwin
+# path, i.e.  SHELL="C:/cygwin64/bin/bash.exe". It's not necessary to
+# set this when running from the command line.
+export SHELL="/bin/bash"
