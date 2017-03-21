@@ -28,8 +28,7 @@ CREATE TABLE profile_counts (
 CREATE INDEX ON profile_segment(chrom,start_pos);
 CREATE INDEX ON profile_segment(chrom,end_pos);
 
-CREATE UNIQUE INDEX ON profile_counts(sample,chrom,bin);
-CREATE INDEX ON profile_counts(sample);  -- might improve performance on sample query
+CREATE UNIQUE INDEX ON profile_counts(chrom,bin,sample);
 
 VACUUM ANALYZE;
 
