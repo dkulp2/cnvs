@@ -24,7 +24,7 @@ MIN.CNV.LEN <- 1200
 # sibs <- c('data_sfari_batch1a','data_sfari_batch1b')
 # parents <- c('data_sfari_batch1c','data_sfari_batch1d')
 
-basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.10Mar2017_test'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.12Mar2017_test'
 
 sibs <- c('dataA','dataB')
 parents <- c('dataC','dataD')
@@ -577,6 +577,41 @@ p5 <- ggplot(filter(rocs2, cnv %in% c('DEL')),
 print(p5)
 print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)) + ggtitle("Rank #5 first"))
 
+write.table(select(segs, family, sib1, sib2, mother, father, chr, start, end, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+#################
+
+# Retrieve the discordant CNVs in SRPB1
+srpb1 <- filter(as.tbl(segs), end > 1552936 & start < 1594100 & end.bin-start.bin > 12)
+srpb1.disc.fam <- unique(filter(srpb1, !concordant)$family)
+
+label = c('sib1','sib2','mother','father')
+label.cn = c('sib1.cn','sib2.cn','par1.cn','par2.cn')
+srpb1_m <-
+  ldply(1:4, function(idx) {
+    mutate(select_(srpb1, 'family', sample=label[idx], 'chr','start','end', cn=label.cn[idx], 'ibd.state', 'concordant'), who=label[idx])
+  })
+
+# load the gold standard genotypes
+srpb1.regions <- c('SD1','LEFT','CENTRAL','RIGHT')
+srpb1.regions.start <- list(SD1=1552936, LEFT=1556802, CENTRAL=1561002, RIGHT=1585902)
+srpb1.regions.end <- list(SD1=1556761, LEFT=1561000, CENTRAL=1585900, RIGHT=1594100)
+srpb1_geno <-
+  ldply(srpb1.regions, function(n) {
+    mutate(read.table(file=sprintf("%s/%s.cn.dat", basedir, n), header = TRUE, stringsAsFactors = FALSE), 
+           region=n, start=as.integer(srpb1.regions.start[[n]]), end=as.integer(srpb1.regions.end[[n]]))
+  })
+
+# Add the genotype and region label to each srpb1.m line
+srpb1 <- sqldf("SELECT sm.*, sg.start as rstart, sg.end as rend, sg.CN as gold_cn, sg.cnq, sg.region FROM srpb1_m sm, srpb1_geno sg 
+          WHERE sg.SAMPLE=sm.sample AND sm.start<sg.end AND sm.end>sg.start", drv='SQLite')
+srpb1 <- mutate(srpb1, a=ifelse(start>rstart, start, rstart), b=ifelse(end<rend, end, rend))
+arrange(filter(srpb1, !concordant & cn!=gold_cn), family, a, sample) %>% select(family, sample, ibd.state, who, region, a, b,cn,gold_cn) %>% mutate(len=b-a) %>% filter(len>1000)
+
+# Then, for each segment, find all 4, e.g.
+arrange(filter(srpb1, family==11470), family, a, sample) %>% select(family, sample, ibd.state, who, region, a, b,cn,gold_cn) %>% mutate(len=b-a) %>% filter(len>1000)
+
+##################
 
 all.cts.m2 <- mutate(cts(filter(segs, !(family %in% c(11711, 11393)))), family='ALL', grp='All but 2')
 all.cts2 <- mutate(cts(filter(segs, !excl)), family='ALL', grp='No Big 3')
