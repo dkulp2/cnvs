@@ -1,0 +1,23 @@
+# This configuration file contains host-specific parameters
+
+export ROOT=${HOME}/data
+
+# External input data
+export profileFile=${ROOT}/gpc_wave2_batch1/profile_seq_20_100.dat.gz
+export arrayFile=${ROOT}/gpc_wave2_batch1/irs_matrix_OMNI25.dat
+export gsdelFile=${ROOT}/gpc_wave2_batch1/gs_dels.genotypes.vcf.gz
+export gscnvFile=${ROOT}/gpc_wave2/gs_cnv.genotypes.vcf.gz
+export referenceFile=${ROOT}/references/Homo_sapiens_assembly19/Homo_sapiens_assembly19.fasta
+
+# Database connection
+export PGUSER=dkulp
+export PGHOST=localhost
+export PGPORT=5432
+export PGDATABASE=seq
+
+export TMPDIR="/tmp"
+
+# Note: when run from Rstudio, the SHELL must be set to the non-cygwin
+# path, i.e.  SHELL="C:/cygwin64/bin/bash.exe". It's not necessary to
+# set this when running from the command line.
+export SHELL="/bin/bash"

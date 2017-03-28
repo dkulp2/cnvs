@@ -36,3 +36,6 @@ vignettes/*.pdf
 # Emacs temporary files
 *~
 \#*\#
+concordance.pdf
+ui/viewCNV/env.txt
+doc/architecture.html

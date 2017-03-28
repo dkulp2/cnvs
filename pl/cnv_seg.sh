@@ -17,10 +17,9 @@ source ${THISDIR}/../conf/site.conf
 # set params for this run
 source ${THISDIR}/../conf/cnv.conf
 
-# Java stuff
-export WSP_DIR=${ROOT}/SVToolkit_Kulp
-export SV_DIR=`cygpath.shim -w ${WSP_DIR}/release/svtoolkit`  # passed to GATK
-export SV_CLASSPATH=${WSP_DIR}/dist/SVToolkit-private.jar:${WSP_DIR}/public/dist/SVToolkit.jar:${WSP_DIR}/public/release/svtoolkit/lib/gatk/GenomeAnalysisTK.jar
+# TBD: generalize this for test/train. Currently this is incestuous.
+INT_LABEL=${LABEL}  # label for internal (test) prior
+EXT_LABEL=${LABEL}  # label for external prior
 
 # auxiliary scripts
 SCRIPTS=${THISDIR}
@@ -29,8 +28,11 @@ ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
 VCF2TAB=${UTILS}/vcf2tab
 GSDEL2TAB=${UTILS}/gs_del2tab
 MERGE_CNV=${SCRIPTS}/merge_cnv.R
+LIKELIHOODS=${SCRIPTS}/likelihoods.R
 STAIRCASE=${SCRIPTS}/staircase.R
 COLLAPSE=${SCRIPTS}/collapse.R
+PRIORS=${SCRIPTS}/priors.R
+POSTERIOR=${SCRIPTS}/posterior.R
 
 
 # input and output files
@@ -72,7 +74,9 @@ else
 fi
 
 # generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
-eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
+if [ ! -f ${SITES} ]; then
+    eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
+fi
 #eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS2} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES_HIRES}
 
 # generate first pass genotypes of rolling windows
@@ -103,16 +107,19 @@ zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
 # basic CNV prediction
 time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
 
+# generate poisson probs
+time Rscript ${LIKELIHOODS} ${OUT1_VCF}.txt ${DBCONN} ${MLE_WINSIZE} ${LABEL}
+
 # filter and adjust
-time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} 1>&2
+time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} ${LABEL} 1>&2
 
-# generate a collapse "site" set
-time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm ${BP_DIST}
+# generate a collapse "site" set => smlx2csm
+time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm flt smlx2csm
 
-# infer a distribution for each site of bounds
-#time Rscript ${BOUNDS} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm ${DBCONN}
+# generate prior distros
+time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${DBCONN} ${LABEL} ${MLE_WINSIZE}
 
-#time Rscript ${MERGE_CNV} ${OUT1_VCF_HIRES}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE2} 1>&2
+time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${DBCONN} ${INT_LABEL} ${EXT_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
 
 # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
 sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
@@ -124,12 +131,15 @@ tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 #tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE2}.cnvgeno.srt.gz
 
 # create a row per sample deletion for input into R
-zcat ${gsdelFile} | ${GSDEL2TAB} -s ${SITES} > ${GS_DEL_FILE}
+if [ -f $gsdelFile ]; then 
+  zcat ${gsdelFile} | ${GSDEL2TAB} -s ${SITES} > ${GS_DEL_FILE}
 
-# create a site file for input into ProfileGentoyper
-cut -f2-5 ${GS_DEL_FILE} | tail -n +1 | uniq > ${GS_DEL_SITES_FILE}
+  # create a site file for input into ProfileGentoyper
+  cut -f2-5 ${GS_DEL_FILE} | tail -n +1 | uniq > ${GS_DEL_SITES_FILE}
 
-cat ${GS_DEL_SITES_FILE} ${CNV_SEG_SITES_FILE} | sort -n -k3,4 > ${IN2_SITES}
+  cat ${GS_DEL_SITES_FILE} ${CNV_SEG_SITES_FILE} | sort -n -k3,4 > ${IN2_SITES}
+fi
+
 
 exit 0
 

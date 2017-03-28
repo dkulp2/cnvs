@@ -4,7 +4,7 @@
 #
 # read compressed profile, write the data to two tables:
 # outseg.txt.gz - tab delimited contains BIN, CHR, START, END, ELENGTH, GCRATIO
-# outpro.txt.gz - tab delimited contains BIN, SAMPLE, OBSERVED, EXPECTED
+# outpro.txt.gz - tab delimited contains BIN, CHR, SAMPLE, OBSERVED, EXPECTED
 
 use strict;
 use FileHandle;
@@ -53,7 +53,7 @@ while (<$profileFh>) {
     $outsegFh->print("$bin\t$chr\t$start\t$end\t$elength\t$gc\t$gctotal\n");
     foreach my $i (0..$#cols) {
 	my ($obs,$exp) = split(/,/,$cols[$i]);
-	$outproFh->print("$bin\t$hCols[$i]\t$obs\t$exp\n");
+	$outproFh->print("$bin\t$chr\t$hCols[$i]\t$obs\t$exp\n");
     }
 }
 

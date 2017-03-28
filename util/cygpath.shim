@@ -7,6 +7,6 @@
 if [[ `uname` =~ CYGWIN ]]; then
     cygpath $@
 else
-    while [[ $1 =~ -.* ]]; do shift; done
+    while [[ $1 =~ ^-.* ]]; do shift; done
     echo $@
 fi
