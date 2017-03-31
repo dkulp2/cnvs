@@ -12,11 +12,12 @@ median.var.max <- 0.3
 median.max <- 3
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# cmd.args <- c('d:/mccarroll/cnv_seg.12.500/windows.vcf.gz.txt','0.80','20','500','d:/mccarroll//cnv_seg.12.500/sites_cnv_segs.txt')
+ Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
+ cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/windows.vcf.gz.txt",'0.80','20','5',"/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug")
 cnv.geno.fn <- cmd.args[1]
 pass.thresh <- as.numeric(cmd.args[2])  # e.g. .80. Drop sites entirely if less than pass.thresh % of samples have FT ("per-sample genotype filter") of PASS
 qual.thresh <- as.numeric(cmd.args[3]) 		# CNQ phred-style threshold, e.g. 20
-max.join <- as.numeric(cmd.args[4])  # size (in nt) of runs to span if flanking calls are the same, e.g. 2000
+max.join <- as.numeric(cmd.args[4])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
 cnv.seg.fn <- cmd.args[5]   # a delimited "site" output file of putative regions
 extend.qual.thresh <- as.numeric(cmd.args[6])
 
@@ -101,9 +102,13 @@ cn.segs$start.map <- pos.map[cn.segs$start,'CENTER']
 cn.segs$end.map <- pos.map[cn.segs$end,'CENTER']+pos.map[cn.segs$end,'BIN.SIZE']
 cn.segs$copy.number <- addNA(as.factor(cn.segs$cn))
 
+# record BIN number (which is different from row index!)
+cn.segs$start.bin <- pos.map[cn.segs$start,'BIN']
+cn.segs$end.bin <- pos.map[cn.segs$end,'BIN']
+
 
 # merge small calls between common CN
-cat(sprintf("Joining segments across small (%s) segments\n", max.join))
+cat(sprintf("Joining segments across small (%s bin) segments\n", max.join))
 new.extents <-
   ddply(cn.segs, .(.id), function(cs) {
     cat(cs$.id[1],"\n")
@@ -111,18 +116,15 @@ new.extents <-
     new.adj <- rep(NA,nrow(cs))
     i <- i2 <- 1  # i is the left-most extent and i2 is the right-most extent of the same cn
     cn.i <- cs$copy.number[i]
-    end.map.i <- cs$end.map[i]
     j <- i+1
     while (j <= nrow(cs)) {
-      if (cs$start.map[j]-end.map.i > max.join) {
+      if (j-i > max.join) {
         new.adj[i] <- i2
         i <- i2+1
         i2 <- i
         cn.i <- cs$copy.number[i]
-        end.map.i <- cs$end.map[i]
         j <- i
       } else if (cs$copy.number[j]==cn.i) {
-        end.map.i <- cs$end.map[j] # new rightmost position of current copy.number extent
         i2 <- j
       }
       j <- j + 1
@@ -138,9 +140,11 @@ new.extents <-
     chr <- cs$chr[start.i]
     
     start.map <- cs$start.map[start.i]
+    start.bin <- cs$start.bin[start.i]
     end.map <- cs$end.map[end.i]
+    end.bin <- cs$end.bin[end.i]
     
-    return(data.frame(cn, start.i, end.i, chr, start.map, end.map))
+    return(data.frame(cn, start.i, end.i, chr, start.map, end.map, start.bin, end.bin))
   })
 
 # use new.extents to dereference cn.segs and create a new (condensed) set
@@ -167,8 +171,10 @@ write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.numbe
 
 db <- src_postgres()
 if (dbExistsTable(db$con, "cnv_mrg")) { dbGetQuery(db$con, "DROP TABLE cnv_mrg") }
-dbWriteTable(db$con, "cnv_mrg", select(cn.segs.merged, .id, seg, chr, start.map, end.map, cn, copy.number))
-dbGetQuery(db$con, "CREATE INDEX on cnv_mrg(chr, \"start.map\", \"end.map\", \".id\")")
+dbWriteTable(db$con, "cnv_mrg", select(cn.segs.merged, .id, seg, chr, start.map, end.map, start.bin, end.bin, cn, copy.number))
+dbGetQuery(db$con, "CREATE INDEX on cnv_mrg(chr, \"start.map\", \".id\")")
+dbGetQuery(db$con, "CREATE INDEX on cnv_mrg(chr, \"start.bin\", \".id\")")
+
 
 save(cnv.geno, file=sprintf("%s.cg.Rdata",cnv.seg.fn))
 
@@ -196,6 +202,4 @@ if (dbExistsTable(db$con, "geno")) { dbGetQuery(db$con, "DROP TABLE geno") }
 dbWriteTable(db$con, "geno", cnv.geno)
 dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin)")
 
-
-write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.mrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
 

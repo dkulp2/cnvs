@@ -39,7 +39,7 @@
 #
 # #1: a sites file to identify the min/max regions per chromosome to process
 # #2: db connection - user:host:port:dbname - profile data is read from this connection
-# #3: the size of the sliding window in which the left half is CN_a and the right is CN_b
+# #3: the size of the sliding window (in bins) in which the left half is CN_a and the right is CN_b
 # #4: the label for the data set, e.g. "gpc_wave2_batch1"
 
 library(plyr)
@@ -48,17 +48,16 @@ library(RPostgreSQL)
 library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','dkulp:localhost:5432:seq','1000','gpc_wave2_batch1')
-#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1A/B12.L500.Q13.W1000.PB0.7/windows.vcf.gz.txt','dkulp:localhost:5432:seq','1000','data_sfari_batch1A')
+ Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
+ cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug",'dkulp:localhost:5432:seq','10','gpc_wave2_batch1')
+
 cnv.seg.fn <- cmd.args[1]
 db.conn.str <- cmd.args[2]
-win.size <- as.numeric(cmd.args[3])
+win.size.bins <- as.numeric(cmd.args[3])
 data.label <- cmd.args[4]
 
 # connect to DB
-db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
-names(db.conn.params) <- c('user','host','port','dbname')
-db <- do.call(src_postgres, db.conn.params)
+db <- src_postgres()
 
 dbGetQuery(db$con, "BEGIN TRANSACTION")
 
@@ -73,8 +72,7 @@ if (dbExistsTable(db$con, "bkpt")) {
 bin.map <- dbGetQuery(db$con, "select * from profile_segment")
 rownames(bin.map) <- bin.map$bin
 
-win.size.bins <- first(which(cumsum(bin.map$elength)>=win.size)) # set window size (in bins) to the size of win.size
-
+stopifnot(win.size.bins %% 2 == 0)
 half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
 
 cat("Counting samples in profile_counts\n")

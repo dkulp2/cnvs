@@ -8,9 +8,9 @@
 # #1: filename base - e.g. sites_cnv_segs.txt
 # #2: method - which set of segments to read? ('csm','ncsm','mlcsm'). File read is base.method.Rdata
 # #3: db connection - user:host:port:dbname - profile data is read from this connection
-# #4: the max size of intermediate regions that was skipped when joining
-# #5: the window size that was used for aggregating profiles
-# #6: the size of the window when scanning for boundary using MLE method (e.g. 1000nt)
+# #4: the max size of intermediate regions that was skipped when joining (in bins, e.g. 5)
+# #5: the window size that was used for aggregating profiles (in bases) - in staircase, don't remove intermediate CNVs larger than this 
+# #6: the size of the window (in bins) when scanning for boundary using MLE method (e.g. 10 bins)
 # #7: data set label
 
 library(plyr)
@@ -18,15 +18,13 @@ library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','gpc_wave2_batch1')
-#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1B/B12.L500.Q13.W1000.PB0.7/sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','data_sfari_batch1B')
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\SFARI.run2\\data_sfari_batch1B\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','500','1200','1000','data_sfari_batch1B')
+#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\SFARI.run2\\data_sfari_batch1B\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','5','1200','10','data_sfari_batch1B')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 db.conn.str <- cmd.args[3]
-max.join <- as.numeric(cmd.args[4])  # size (in nt) of runs to span if flanking calls are the same, e.g. 500
-profile.group.size <- as.numeric(cmd.args[5])
-win.size <- as.numeric(cmd.args[6])
+max.join <- as.numeric(cmd.args[4])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
+profile.group.size <- as.numeric(cmd.args[5])  # length of window size, e.g. 1200
+win.size.bins <- as.numeric(cmd.args[6])  # in bins. e.g. 10 for a ~1000 nt window.
 data.label <- cmd.args[7]
 
 
@@ -117,8 +115,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   
   pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom ORDER BY ps.chrom, ps.start_pos", data.label, sample))
 
-  # # of bins in window (e.g. 10 for 1000nt)
-  win.size.bins <- first(which(cumsum(pois.cn.df$end_pos-pois.cn.df$start_pos+1)>=win.size)) # set window size (in bins) to the size of win.size
+  stopifnot(win.size.bins %% 2 == 0) # must be even number of bins
   half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
 
   pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
@@ -127,11 +124,15 @@ csm.new <- ddply(csm, .(.id), function(df) {
   ml.transition2 <- function(sample, pos1, pos2, cnA, cnB) {
     cnA <- ifelse(cnA > 3, 4, cnA+1)  # map CN to index into pois.cn. CN > 3 => CN:=3
     cnB <- ifelse(cnB > 3, 4, cnB+1)
-    posL <- pos1-win.size
-    posR <- pos2+win.size
-    binL <- min(which(pois.cn.df$end_pos >= posL))
-    binR <- max(which(pois.cn.df$start_pos <= posR))
+
+    binL <- min(which(pois.cn.df$end_pos >= pos1)) - win.size.bins
+    binL <- ifelse(binL < 1, 1, binL)
+    posL <- pois.cn.df$start_pos[binL]
     
+    binR <- max(which(pois.cn.df$start_pos <= pos2)) + win.size.bins
+    binR <- ifelse(binR > nrow(pois.cn.df), nrow(pois.cn.df), binR)
+    posR <- pois.cn.df$end_pos[binR]
+
     bin.count <- binR - binL + 1
     pA <- pois.cnL[[cnA]][binL:(binL+bin.count-win.size.bins)] 
     pB <- pois.cnR[[cnB]][binL:(binL+bin.count-win.size.bins)]
