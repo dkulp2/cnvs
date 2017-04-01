@@ -8,8 +8,8 @@
 # #1: filename base - e.g. sites_cnv_segs.txt
 # #2: method - which set of segments to read? ('csm','ncsm','mlcsm'). File read is base.method.Rdata
 # #3: db connection - user:host:port:dbname - profile data is read from this connection
-# #4: the max size of intermediate regions that was skipped when joining (in bins, e.g. 5)
-# #5: the window size that was used for aggregating profiles (in bases) - in staircase, don't remove intermediate CNVs larger than this 
+# #4: the max size of intermediate regions that was skipped when joining (in bins, e.g. 5). Use 4x this value to remove short NA segments
+# #5: the window size that was used for aggregating profiles (in bins) - in staircase, don't remove intermediate CNVs larger than this 
 # #6: the size of the window (in bins) when scanning for boundary using MLE method (e.g. 10 bins)
 # #7: data set label
 
@@ -18,26 +18,26 @@ library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\SFARI.run2\\data_sfari_batch1B\\sites_cnv_segs.txt','csm','dkulp:localhost:5432:seq','5','1200','10','data_sfari_batch1B')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
+# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','csm','5','12','10','gpc_wave2_batch1')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
-db.conn.str <- cmd.args[3]
-max.join <- as.numeric(cmd.args[4])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
-profile.group.size <- as.numeric(cmd.args[5])  # length of window size, e.g. 1200
-win.size.bins <- as.numeric(cmd.args[6])  # in bins. e.g. 10 for a ~1000 nt window.
-data.label <- cmd.args[7]
+max.join <- as.numeric(cmd.args[3])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
+profile.group.size <- as.numeric(cmd.args[4])  # length of window size in bins, e.g. 12
+win.size.bins <- as.numeric(cmd.args[5])  # in bins. e.g. 10 for a ~1000 nt window.
+data.label <- cmd.args[6]
 
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 csm <- as.tbl(cn.segs.merged)
 csm$len <- csm$seg <- csm$len2 <- csm$gap <- NULL
 csm$len <- csm$end.map - csm$start.map 
+csm$len.i <- csm$end.i - csm$start.i + 1
 
 # identify "small" NAs and remove them
-csm <- subset(csm, !is.na(cn) | len > 4*max.join)
+csm <- subset(csm, !is.na(cn) | len.i > 4*max.join)
 
 # merge rows with same CN now that small NAs are removed
-# merge across small (max.join) gaps unless flanking CNs are both 2.
 csm <- ddply(csm, .(.id, chr), function(df) {
   # the first row of a pair of adjacent rows with the same CN
   idx <- 1:(nrow(df)-1)
@@ -56,9 +56,7 @@ csm <- ddply(csm, .(.id, chr), function(df) {
 })
 
 # connect to DB
-db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
-names(db.conn.params) <- c('user','host','port','dbname')
-db <- do.call(src_postgres, db.conn.params)
+db <- src_postgres()
 
 # identify candidate stairstep regions
 m.prev.idx <- 1:(nrow(csm)-2)
@@ -67,13 +65,16 @@ m.next.idx <- 3:(nrow(csm))
 
 # candidates holds the indices into csm of the middle region of a up or down 1-copy difference staircase
 # NOTE: assume csm is already ordered by sample and fragment position
-candidates <- m.idx[csm$len[m.idx]<profile.group.size & 
+candidates <- m.idx[csm$len.i[m.idx]<profile.group.size & 
+                      csm$len.i[m.next.idx]>profile.group.size &
                       (csm$cn[m.idx] - csm$cn[m.prev.idx] == csm$cn[m.next.idx] - csm$cn[m.idx]) & 
                       (abs(csm$cn[m.next.idx] - csm$cn[m.prev.idx]) == 2) &
                       csm$.id[m.prev.idx] == csm$.id[m.next.idx]]
 
 # remove the intermediate candidates
-csm <- csm[-na.omit(candidates),]
+if (length(candidates)>0) {
+  csm <- csm[-na.omit(candidates),]
+}
 
 
 
@@ -204,4 +205,4 @@ write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.numbe
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.smlmrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
 
-dbDisconnect(db$con)
+rm(db)
