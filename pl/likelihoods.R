@@ -48,25 +48,24 @@ library(RPostgreSQL)
 library(zoo)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
- Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
- cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug",'dkulp:localhost:5432:seq','10','gpc_wave2_batch1')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
+# cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug",'10','gpc_wave2_batch1')
 
 cnv.seg.fn <- cmd.args[1]
-db.conn.str <- cmd.args[2]
-win.size.bins <- as.numeric(cmd.args[3])
-data.label <- cmd.args[4]
+win.size.bins <- as.numeric(cmd.args[2])
+data.label <- cmd.args[3]
 
 # connect to DB
 db <- src_postgres()
 
-dbGetQuery(db$con, "BEGIN TRANSACTION")
+invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 
 # If table doesn't exist, then it will be created on the first write
 if (dbExistsTable(db$con, "pois")) {
-   dbGetQuery(db$con, "DROP TABLE pois")
+   invisible(dbGetQuery(db$con, "DROP TABLE pois"))
 }
 if (dbExistsTable(db$con, "bkpt")) {
-   dbGetQuery(db$con, "DROP TABLE bkpt");
+   invisible(dbGetQuery(db$con, "DROP TABLE bkpt");)
 }
 
 bin.map <- dbGetQuery(db$con, "select * from profile_segment")
@@ -154,16 +153,16 @@ sapply(samples$sample, function(sample) {
 })
 
 cat("Done.\nCreating indices and foreign keys on pois and bkpt\n")
-dbGetQuery(db$con, "CREATE UNIQUE INDEX ON pois(label,sample,chr,bin)")
-dbGetQuery(db$con, "ALTER TABLE pois ADD FOREIGN KEY(chr,bin) REFERENCES profile_segment(chrom,bin)")
+invisible(dbGetQuery(db$con, "CREATE UNIQUE INDEX ON pois(label,sample,chr,bin)"))
+invisible(dbGetQuery(db$con, "ALTER TABLE pois ADD FOREIGN KEY(chr,bin) REFERENCES profile_segment(chrom,bin)"))
 
-dbGetQuery(db$con, "CREATE UNIQUE INDEX ON bkpt(sample,chr,bkpt_bin)")
-dbGetQuery(db$con, "CREATE INDEX ON bkpt(bkpt_bin)")
-dbGetQuery(db$con, "ALTER TABLE bkpt ADD FOREIGN KEY(chr,bkpt_bin) REFERENCES profile_segment(chrom,bin)")
+invisible(dbGetQuery(db$con, "CREATE UNIQUE INDEX ON bkpt(sample,chr,bkpt_bin)"))
+invisible(dbGetQuery(db$con, "CREATE INDEX ON bkpt(bkpt_bin)"))
+invisible(dbGetQuery(db$con, "ALTER TABLE bkpt ADD FOREIGN KEY(chr,bkpt_bin) REFERENCES profile_segment(chrom,bin)"))
 
 dbCommit(db$con)
 
 cat("Done.\nVACUUMing\n")
-dbGetQuery(db$con, "VACUUM ANALYZE bkpt")
-dbGetQuery(db$con, "VACUUM ANALYZE pois")
-dbDisconnect(db$con)
+invisible(dbGetQuery(db$con, "VACUUM ANALYZE bkpt"))
+invisible(dbGetQuery(db$con, "VACUUM ANALYZE pois"))
+rm(db)
