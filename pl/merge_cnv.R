@@ -12,8 +12,8 @@ median.var.max <- 0.3
 median.max <- 3
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
- Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
- cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/windows.vcf.gz.txt",'0.80','20','5',"/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug")
+ # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
+ # cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/windows.vcf.gz.txt",'0.80','20','5',"/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug")
 cnv.geno.fn <- cmd.args[1]
 pass.thresh <- as.numeric(cmd.args[2])  # e.g. .80. Drop sites entirely if less than pass.thresh % of samples have FT ("per-sample genotype filter") of PASS
 qual.thresh <- as.numeric(cmd.args[3]) 		# CNQ phred-style threshold, e.g. 20
@@ -200,6 +200,6 @@ write.table(cnv.geno, file=cnv.geno.exploded.fn, quote=FALSE, sep="\t", row.name
 cat(sprintf("Writing %s exploded genotype calls to table geno\n",nrow(cnv.geno)))
 if (dbExistsTable(db$con, "geno")) { dbGetQuery(db$con, "DROP TABLE geno") }
 dbWriteTable(db$con, "geno", cnv.geno)
-dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin)")
+dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin, sample)")
 
 
