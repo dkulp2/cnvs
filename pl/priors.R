@@ -19,13 +19,12 @@ library(caroline)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
-# cmd.args <- c('/home/unix/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlx2csm','dkulp:localhost:5432:seq','gpc_wave2_batch1','1000')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
+# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','smlx2csm','gpc_wave2_batch1','10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
-db.conn.str <- cmd.args[3]
-data.label <- cmd.args[4]
-PAD <- as.numeric(cmd.args[5])
+data.label <- cmd.args[3]
+PAD <- as.numeric(cmd.args[4])
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 cnvx <- filter(as.tbl(cn.segs.merged), x.diff < quantile(cn.segs.merged$x.diff,.95) & y.diff < quantile(cn.segs.merged$y.diff,.95))
@@ -34,12 +33,10 @@ cnvx$samples.quoted <- unlist(lapply(strsplit(cnvx$samples,';'), function(s) { p
 
 
 # connect to DB
-db.conn.params <- as.list(unlist(strsplit(db.conn.str,":")))
-names(db.conn.params) <- c('user','host','port','dbname')
-db <- do.call(src_postgres, db.conn.params)
+db <- src_postgres()
 
 # return the bin for the genomic coordinate
-posToBin <- fnuction(chr, pos) {
+posToBin <- function(chr, pos) {
     bin.df <- dbGetQuery(db$con, sprintf("SELECT ps.bin, ps.start_pos, ps.end_pos FROM profile_segment ps WHERE ps.chrom='%s' AND ps.start_pos <= %s AND ps.end_pos >= %s", chr, pos, pos))
     stopifnot(nrow(bin.df)==1)
     return(bin.df$bin)
@@ -53,7 +50,7 @@ dbGetQuery(db$con, "BEGIN TRANSACTION")
 mk.prior <- function(chr, x1, x2, samples, label) {
   bin1 <- posToBin(chr, x1) - PAD
   bin2 <- posToBin(chr, x2) + PAD
-  bkpts <- dbGetQuery(db$con, sprintf("SELECT b.sample, loss_ll, gain_ll, no_bkpt_ll FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s'", 
+  bkpts <- dbGetQuery(db$con, sprintf("SELECT b.sample, bkpt_bin as bin, loss_ll, gain_ll, no_bkpt_ll FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s'", 
                                       chr, samples, bin1, bin2, label))
   stopifnot(nrow(bkpts)>0)
 
@@ -73,7 +70,7 @@ mk.prior <- function(chr, x1, x2, samples, label) {
   )
 
   # assume that each p(loss|x_j) has equal wait. TODO: add call confidence per sample  
-  bkpt.prior <- mutate(ddply(bkpts, .(bin,start_pos), summarize,
+  bkpt.prior <- mutate(ddply(bkpts, .(bin), summarize,
                              loss.u=mean(lossZ),
                              gain.u=mean(gainZ),
                              nc.u=mean(ncZ)),
