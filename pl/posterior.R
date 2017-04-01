@@ -20,16 +20,14 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','.7', '1000')
-# cmd.args <- c('/home/unix/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','gpc_wave2_batch1','gpc_wave2_batch1','0.7','1000')
-#cmd.args <- c('/home/unix/dkulp/data/out/data_sfari_batch1A2/B12.L500.Q13.W1000.PB0.7/sites_cnv_segs.txt','smlcsm','dkulp:localhost:5432:seq','data_sfari_batch1A2','data_sfari_batch1A2','0.7','1000')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
+# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','gpc_wave2_batch1','gpc_wave2_batch1','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
-db.conn.str <- cmd.args[3]
-test.label <- cmd.args[4]
-external.label <- cmd.args[5]
-external.blend <- as.numeric(cmd.args[6])
-PAD <- as.numeric(cmd.args[7])
+test.label <- cmd.args[3]
+external.label <- cmd.args[4]
+external.blend <- as.numeric(cmd.args[5])
+PAD <- as.numeric(cmd.args[6])
 
 # predicted CNVs
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
@@ -38,25 +36,24 @@ cnvs <- as.tbl(cn.segs.merged)
 # connect to DB
 db <- src_postgres()
 
-dbGetQuery(db$con, "BEGIN TRANSACTION")
+invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 
 
 # retrieve them all into memory so it's easy to do a bin=>pos mapping
-profile.segments <- tbl(db, profile_segment) %>% collect
-rownames(profile.segments) <- profile.segments$bin
+profile.segments <- tbl(db, 'profile_segment') %>% collect(n=Inf)
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
     stopifnot(length(pos)==1)
-    bin.df <- filter(profile.segments, chrom=chr & start_pos <= pos & end_pos >= pos)
+    bin.df <- filter(profile.segments, chrom==chr & start_pos <= pos & end_pos >= pos)
     stopifnot(nrow(bin.df)==1)
     return(bin.df$bin)
 }
 
 # returns genomic position. bin can be a vector of integers.
 binToPos <- function(bin) {
-    df <- right_join(profile.segments, tibble(bin=bin))
-    df$start_pos + (df$end_pos - df$start_pos)/2
+    df <- right_join(profile.segments, tibble(bin=bin), by='bin')
+    df$start_pos + (df$end_pos - df$start_pos) %/% 2
 }
 
 fetch.prior <- function(label, chr, pos, change) {
@@ -102,10 +99,10 @@ mk.posterior <- function(df, pos, change) {
   }
   
                                         # load likelihoods for this sample
-  bin <- postToBin(df$chr, pos)
+  bin <- posToBin(df$chr, pos)
   binL <- bin - 2*PAD
   binR <- bin + 2*PAD
-  bkpts <- dbGetQuery(db$con, sprintf("SELECT b.sample, loss_ll, gain_ll, no_bkpt_ll FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s' ORDER BY b.chr, b.bkpt_bin", 
+  bkpts <- dbGetQuery(db$con, sprintf("SELECT b.chr, b.bkpt_bin as bin, b.sample, loss_ll, gain_ll, no_bkpt_ll, b.label FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s' ORDER BY b.chr, b.bkpt_bin", 
                                       df$chr, df$.id, binL, binR, test.label))
 
     if (nrow(bkpts) == 0) {
@@ -184,9 +181,10 @@ mk.posterior <- function(df, pos, change) {
       
     } else {
       # no prior (flat)
-      mutate(bkpts, bayes_loss=loss, bayes_gain=gain, bayes_nc=nc, bin=bkpt_bin, loss.u=NA_real_, gain.u=NA_real_, nc.u=NA_real_)
+      mutate(bkpts, bayes_loss=loss, bayes_gain=gain, bayes_nc=nc, loss.u=NA_real_, gain.u=NA_real_, nc.u=NA_real_)
     }
-  
+
+    
   dbWriteTable(db$con, "posterior_dist", mutate(bkpt.posterior[,c('bin','label','sample','chr',
                                                                   'loss','gain','nc','loss.u','gain.u','nc.u',
                                                                   'bayes_loss','bayes_gain','bayes_nc')], 
@@ -218,10 +216,10 @@ mk.posterior <- function(df, pos, change) {
 }
 
 if (dbExistsTable(db$con, "posterior")) {
-  dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label)
+  invisible(dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label))
 }
 if (dbExistsTable(db$con, "posterior_dist")) {
-  dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label)
+  invisible(dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label))
 }
 
 # for each predicted CNV, compute a new normalized density for each breakpoint based on the joint probability of the likelihood and prior.
@@ -256,10 +254,9 @@ dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","
 cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
 
 # convert all coordinates to genomic for compatibility with other "cn.segs.merged" tables
-cnvs.post <- mutate(cnvs.post,
-                    start.CI.L=binToPos(start.CI.L), start.map=binToPos(start.map), start.CI.R=binToPos(start.CI.R),
-                    end.CI.L=binToPos(end.CI.L), end.map=binToPos(end.map), end.CI.R=binToPos(end.CI.R))=
-cn.segs.merged <- cnvs.post
+cn.segs.merged <- mutate(cnvs.post,
+                         start.CI.L=binToPos(start.CI.L), start.map=binToPos(start.map), start.CI.R=binToPos(start.CI.R),
+                         end.CI.L=binToPos(end.CI.L), end.map=binToPos(end.map), end.CI.R=binToPos(end.CI.R))
 
 # save
 save(cn.segs.merged, file=sprintf("%s.bayescsm.Rdata",cnv.seg.fn))
@@ -267,9 +264,9 @@ cn.segs.merged$copy.number <- addNA(as.factor(cn.segs.merged$cn))
 write.table(select(cn.segs.merged, .id, label, chr, start.CI.L, as.integer(start.map), start.CI.R, end.CI.L, as.integer(end.map), end.CI.R, copy.number), file=sprintf("%s.bayesCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
 # write new posterior version to db
-if (dbExistsTable(db$con, "cnv_post")) { dbGetQuery(db$con, "DROP TABLE cnv_post") }
+if (dbExistsTable(db$con, "cnv_post")) { invisible(dbGetQuery(db$con, "DROP TABLE cnv_post")) }
 dbWriteTable(db$con, "cnv_post", cn.segs.merged)
-dbGetQuery(db$con, "CREATE INDEX on cnv_post(chr, \"start.map\", \".id\")")
+invisible(dbGetQuery(db$con, "CREATE INDEX on cnv_post(chr, \"start.map\", \".id\")"))
 
-dbDisconnect(db$con)
+rm(db)
 
