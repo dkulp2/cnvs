@@ -30,12 +30,14 @@ data.label <- cmd.args[6]
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 csm <- as.tbl(cn.segs.merged)
+warning(Sys.time(), sprintf(": Loaded %s rows", nrow(csm)))
 csm$len <- csm$seg <- csm$len2 <- csm$gap <- NULL
 csm$len <- csm$end.map - csm$start.map 
-csm$len.i <- csm$end.i - csm$start.i + 1
+csm$len.bin <- csm$end.bin - csm$start.bin + 1
 
 # identify "small" NAs and remove them
-csm <- subset(csm, !is.na(cn) | len.i > 4*max.join)
+csm <- filter(csm, !is.na(cn) | len.bin > 4*max.join)
+warning(Sys.time(), ": Removed small NAs <= ",4*max.join,", leaving ",nrow(csm)," rows")
 
 # merge rows with same CN now that small NAs are removed
 csm <- ddply(csm, .(.id, chr), function(df) {
@@ -52,11 +54,10 @@ csm <- ddply(csm, .(.id, chr), function(df) {
     adj <- df$cn[idx] == df$cn[idx+1]
   } 
   df$len <- df$end.map - df$start.map 
+  df$len.bin <- df$end.bin - df$start.bin + 1
   return(df)
 })
-
-# connect to DB
-db <- src_postgres()
+warning(Sys.time(),": Merged now-adjacent segments with same CN, leaving ",nrow(csm)," rows")
 
 # identify candidate stairstep regions
 m.prev.idx <- 1:(nrow(csm)-2)
@@ -65,20 +66,28 @@ m.next.idx <- 3:(nrow(csm))
 
 # candidates holds the indices into csm of the middle region of a up or down 1-copy difference staircase
 # NOTE: assume csm is already ordered by sample and fragment position
-candidates <- m.idx[csm$len.i[m.idx]<profile.group.size & 
-                      csm$len.i[m.next.idx]>profile.group.size &
+candidates <- m.idx[csm$len.bin[m.idx]<profile.group.size &
                       (csm$cn[m.idx] - csm$cn[m.prev.idx] == csm$cn[m.next.idx] - csm$cn[m.idx]) & 
                       (abs(csm$cn[m.next.idx] - csm$cn[m.prev.idx]) == 2) &
                       csm$.id[m.prev.idx] == csm$.id[m.next.idx]]
 
-# remove the intermediate candidates
-if (length(candidates)>0) {
-  csm <- csm[-na.omit(candidates),]
-}
+# NAs are where one of the segments are NA
+candidates <- na.omit(candidates)
 
+# remove the intermediate candidates
+warning(Sys.time(),": Removing ",length(candidates)," small segments that are in a -1, 0, +1 staircase")
+if (length(candidates)>0) {
+  csm <- csm[-candidates,]
+}
+warning(Sys.time(),": leaving ",nrow(csm)," rows")
 
 
 ###################################################################################################################
+
+# connect to DB
+warning(Sys.time(),": Connecting to db.")
+db <- src_postgres()
+
 
 # calculate the CI by growing greadily away from max. There are no NAs in p.
 conf.int <- function(p, conf=0.95) {
@@ -112,7 +121,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   # df <- csm[csm$.id=='08C79660',]
   # df <- csm[csm$.id=='09C100176',]
   sample <- df$.id[1]
-  cat(sample,"\n")
+  warning(Sys.time(),": Computing MLE boundaries for ",sample)
   
   pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom ORDER BY ps.chrom, ps.start_pos", data.label, sample))
 
@@ -199,7 +208,7 @@ cn.segs.merged <- mutate(csm.new,
                          seg=sprintf("SEG_%s_%s_%s", chr, start.map, end.map),
                          label=sprintf("%s_%s",seg,.id))
 
-
+warning(Sys.time(), "Saving smlcsm")
 save(cn.segs.merged, file=sprintf("%s.smlcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.sml.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
