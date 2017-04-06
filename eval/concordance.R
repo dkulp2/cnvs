@@ -16,7 +16,7 @@ psegs[1,'start'] <- 1
 
 big2 <- 200  # any region greater than big2 nts that is CN=2 for all samples is replaced by a small region
 big2.replacement <- 5 # the size of the new CN=2 region
-MIN.CNV.LEN <- 1200
+MIN.CNV.LEN <- 12
 
 # load data ########################
 # basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI'
@@ -25,6 +25,7 @@ MIN.CNV.LEN <- 1200
 # parents <- c('data_sfari_batch1c','data_sfari_batch1d')
 
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.12Mar2017_test'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.1Apr2017'
 
 sibs <- c('dataA','dataB')
 parents <- c('dataC','dataD')
@@ -103,7 +104,7 @@ load.cnvs <- function(d) {
   new.cnvs <- 
     ddply(cn.segs.merged, .(.id, chr), function(df) {
       cat(first(df$.id),"\n")
-      df <- arrange(filter(df, end.map-start.map > MIN.CNV.LEN), start.map)
+      df <- arrange(filter(df, end.bin-start.bin > MIN.CNV.LEN), start.map)
       row.range <- 2:nrow(df)
       gap.pre <- which(df$start.map[row.range] > df$end.map[row.range-1])+1
       if (length(gap.pre)>0) {
