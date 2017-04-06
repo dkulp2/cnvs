@@ -18,8 +18,8 @@ library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
-# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','csm','5','12','10','gpc_wave2_batch1')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1A_1Apr2017_binspace")
+# cmd.args <- c('/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1A_1Apr2017_binspace/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt','csm','5','12','10','data_sfari_batch1A_1Apr2017_binspace')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 max.join <- as.numeric(cmd.args[3])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
@@ -30,14 +30,14 @@ data.label <- cmd.args[6]
 
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 csm <- as.tbl(cn.segs.merged)
-warning(Sys.time(), sprintf(": Loaded %s rows", nrow(csm)))
+message(Sys.time(), sprintf(": Loaded %s rows", nrow(csm)))
 csm$len <- csm$seg <- csm$len2 <- csm$gap <- NULL
 csm$len <- csm$end.map - csm$start.map 
 csm$len.bin <- csm$end.bin - csm$start.bin + 1
 
 # identify "small" NAs and remove them
 csm <- filter(csm, !is.na(cn) | len.bin > 4*max.join)
-warning(Sys.time(), ": Removed small NAs <= ",4*max.join,", leaving ",nrow(csm)," rows")
+message(Sys.time(), ": Removed small NAs <= ",4*max.join,", leaving ",nrow(csm)," rows")
 
 # merge rows with same CN now that small NAs are removed
 csm <- ddply(csm, .(.id, chr), function(df) {
@@ -57,7 +57,7 @@ csm <- ddply(csm, .(.id, chr), function(df) {
   df$len.bin <- df$end.bin - df$start.bin + 1
   return(df)
 })
-warning(Sys.time(),": Merged now-adjacent segments with same CN, leaving ",nrow(csm)," rows")
+message(Sys.time(),": Merged now-adjacent segments with same CN, leaving ",nrow(csm)," rows")
 
 # identify candidate stairstep regions
 m.prev.idx <- 1:(nrow(csm)-2)
@@ -75,17 +75,17 @@ candidates <- m.idx[csm$len.bin[m.idx]<profile.group.size &
 candidates <- na.omit(candidates)
 
 # remove the intermediate candidates
-warning(Sys.time(),": Removing ",length(candidates)," small segments that are in a -1, 0, +1 staircase")
+message(Sys.time(),": Removing ",length(candidates)," small segments that are in a -1, 0, +1 staircase")
 if (length(candidates)>0) {
   csm <- csm[-candidates,]
 }
-warning(Sys.time(),": leaving ",nrow(csm)," rows")
+message(Sys.time(),": leaving ",nrow(csm)," rows")
 
 
 ###################################################################################################################
 
 # connect to DB
-warning(Sys.time(),": Connecting to db.")
+message(Sys.time(),": Connecting to db.")
 db <- src_postgres()
 
 
@@ -116,12 +116,9 @@ conf.int <- function(p, conf=0.95) {
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
-  #csm.new <- ddply(filter(csm, .id %in% c('08C79660','09C100176')), .(.id), function(df) {
-#  df <- filter(csm, .id %in% c('MH0131634'))
-  # df <- csm[csm$.id=='08C79660',]
-  # df <- csm[csm$.id=='09C100176',]
+  # df <- csm[csm$.id=='SSC00003',]
   sample <- df$.id[1]
-  warning(Sys.time(),": Computing MLE boundaries for ",sample)
+  message(Sys.time(),": Computing MLE boundaries for ",sample)
   
   pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom ORDER BY ps.chrom, ps.start_pos", data.label, sample))
 
@@ -130,47 +127,64 @@ csm.new <- ddply(csm, .(.id), function(df) {
 
   pois.cnL <- as.list(pois.cn.df[,grep("cnL",names(pois.cn.df))])
   pois.cnR <- as.list(pois.cn.df[,grep("cnR",names(pois.cn.df))])
+
   
-  ml.transition2 <- function(sample, pos1, pos2, cnA, cnB) {
+  ml.transition2 <- function(sample, bin1, bin2, cnA, cnB) {
+
+    binToPos <- function(b, side='start_pos') {
+      pos <- filter(pois.cn.df, bin==b)[[side]]
+      if (length(pos)==0) { warning("Bin=>Pos mapping failed for %s. sample=%s, bin1=%s, bin2=%s", b, sample, bin1, bin2) }
+      pos
+    }
+
+
     cnA <- ifelse(cnA > 3, 4, cnA+1)  # map CN to index into pois.cn. CN > 3 => CN:=3
     cnB <- ifelse(cnB > 3, 4, cnB+1)
 
-    binL <- min(which(pois.cn.df$end_pos >= pos1)) - win.size.bins
+    binL <- bin1 - win.size.bins
     binL <- ifelse(binL < 1, 1, binL)
-    posL <- pois.cn.df$start_pos[binL]
+    posL <- binToPos(binL)
     
-    binR <- max(which(pois.cn.df$start_pos <= pos2)) + win.size.bins
-    binR <- ifelse(binR > nrow(pois.cn.df), nrow(pois.cn.df), binR)
-    posR <- pois.cn.df$end_pos[binR]
+    binR <- bin2 + win.size.bins
+    binR <- ifelse(binR > max(pois.cn.df$bin), max(pois.cn.df$bin), binR)
+    posR <- binToPos(binR,'end_pos')
 
     bin.count <- binR - binL + 1
-    pA <- pois.cnL[[cnA]][binL:(binL+bin.count-win.size.bins)] 
-    pB <- pois.cnR[[cnB]][binL:(binL+bin.count-win.size.bins)]
+    pois.idx.start <- which(pois.cn.df$bin==binL); stopifnot(length(pois.idx.start)>0)
+    pA <- pois.cnL[[cnA]][pois.idx.start:(pois.idx.start+bin.count-win.size.bins)] 
+    pB <- pois.cnR[[cnB]][pois.idx.start:(pois.idx.start+bin.count-win.size.bins)]
     jp <- pA * pB    # joint likelihood
     jp.norm <- jp / sum(jp)  # normalized
     best.jp.bin <- which.max(jp.norm)
+
     #    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
-    if (length(best.jp.bin)>0) { # NAs if length is zero
+    if (length(best.jp.bin)>0) { # Either cnA or cnB is NA if length is zero
       best.bin <- binL+(best.jp.bin-1)+half.win # first bin passed the transition
-      best.pos <- pois.cn.df[best.bin, 'start_pos']
+      best.pos <- binToPos(best.bin)
+
       CI <- conf.int(jp.norm)  # returns CI$left and CI$right, which are bin offsets of best.pos
       binCI.L <- best.bin + CI$left
       binCI.R <- best.bin + CI$right
       
       # bounds are generous, including the furthest base from the best.pos in the transition bins.
-      left.bound <- pois.cn.df[binCI.L,'start_pos']
-      right.bound <- pois.cn.df[binCI.R,'end_pos']
+      left.bound <- binToPos(binCI.L)
+      right.bound <- binToPos(binCI.R, 'end_pos')
       
       return(data.frame(pos=best.pos, left.bound=left.bound, right.bound=right.bound, win.size=posR-posL+1, left.tail=jp.norm[1], right.tail=jp.norm[length(jp.norm)], binL=binL, binR=binR, best.bin=best.bin, binCI.L=binCI.L, binCI.R=binCI.R))
     } else {
-      return(data.frame(pos=pos1 + (pos2-pos1)/2, left.bound=NA, right.bound=NA, win.size=posR-posL+1, left.tail=NA, right.tail=NA, best.bin=NA, binL=binL, binR=binR, binCI.L=NA, binCI.R=NA))
+      best.bin <- bin1 + (bin2-bin1)%/%2 + 1
+      best.pos <- binToPos(best.bin)
+      return(data.frame(pos=best.pos, left.bound=NA, right.bound=NA, win.size=posR-posL+1, left.tail=NA, right.tail=NA, best.bin=best.bin, binL=binL, binR=binR, binCI.L=NA, binCI.R=NA))
     }
   }
   
   # Iterate across every boundary, where the boundary between the first and second segment is idx=1, etc.
   new.bounds <- ldply(1:(nrow(df)-1), function(idx) { 
-    ml.transition2(sample, df$end.map[idx], df$start.map[idx+1], df$cn[idx], df$cn[idx+1]) 
+    ml.transition2(sample, df$end.bin[idx], df$start.bin[idx+1], df$cn[idx], df$cn[idx+1]) 
   })
+
+  # replace old values of start.map, end.map, start.bin, end.bin and add interval data.
+  # all these ifelse statements simply replace rows only where cn is not NA.
   df$end.map <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$pos,NA))
   df$end.map.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$left.bound,NA))
   df$end.map.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$right.bound,NA))
@@ -179,7 +193,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$end.map.R.tail <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$right.tail,NA))
   df$end.bin.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binL,NA))
   df$end.bin.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binR,NA))
-  df$end.best.bin <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$best.bin,NA))
+  df$end.bin <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$best.bin,NA))
   df$end.binCI.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.L,NA))
   df$end.binCI.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.R,NA))
   
@@ -191,7 +205,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$start.map.R.tail <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$right.tail))
   df$start.bin.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binL))
   df$start.bin.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binR))
-  df$start.best.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$best.bin))
+  df$start.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$best.bin))
   df$start.binCI.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.L))
   df$start.binCI.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.R))
 
@@ -200,6 +214,9 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$dCN.L <- c(2-df$cn.2[1], df$dCN.R[1:nrow(df)-1])
   df$dL <- ifelse(df$dCN.L > 0, 'G', ifelse(df$dCN.L < 0, 'L', 'N'))
   df$dR <- ifelse(df$dCN.R > 0, 'G', ifelse(df$dCN.R < 0, 'L', 'N'))
+
+  df$start.i <- NULL
+  df$end.i <- NULL
   
   return(df)
 })
@@ -208,7 +225,7 @@ cn.segs.merged <- mutate(csm.new,
                          seg=sprintf("SEG_%s_%s_%s", chr, start.map, end.map),
                          label=sprintf("%s_%s",seg,.id))
 
-warning(Sys.time(), "Saving smlcsm")
+message(Sys.time(), "Saving smlcsm")
 save(cn.segs.merged, file=sprintf("%s.smlcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.sml.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
