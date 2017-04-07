@@ -1,0 +1,180 @@
+#!/usr/bin/env perl
+#
+
+use strict;
+use FileHandle;
+use Getopt::Long;
+use Pod::Usage;
+
+my $infile;
+my ($decompress, $append, $pipeData, $skipIfExists, $help);
+
+GetOptions("z|decompress" => \$decompress,
+	   "a|append" => \$append,
+	   "p|pipe" => \$pipeData,
+	   "s|skip" => \$skipIfExists,
+	   "h|help" => \$help) || pod2usage(2);
+pod2usage(1) if $help;
+pod2usage("$0: Too many files given.\n") unless (@ARGV <= 1);
+
+$decompress |= $ARGV[0] =~ /\.gz$/;
+
+my $inFileFH;
+if (@ARGV==0) {
+    # use stdin
+    $pipeData = 1;
+    if ($decompress) {
+	$inFileFH = new FileHandle "zcat - |";
+    } else {
+	$inFileFH = *STDIN;
+    }
+} else {
+    # file named on command line
+    if ($decompress) {
+	$inFileFH = new FileHandle "zcat $ARGV[0] |";
+    } else {
+	$inFileFH = new FileHandle $ARGV[0]
+    }
+}
+
+# parse first line
+my $meta = <$inFileFH>;
+my ($tableName, $rest) = ($meta =~ /^#\s*(\w+)\s*:\s*(.*)$/);
+die "Malformed metadata" unless $tableName;
+
+my ($columns, $keys) = split(/\s*;\s*/,$rest);
+if (!defined($columns)) { $columns = $rest; }
+
+my (@columns) = split(/\s*,\s*/, $columns);
+my @colNames;
+my %columns; # name => data type
+foreach my $col (@columns) {
+    my ($name, $type) = ($col =~ /(\w+)\s*\{(.+)\}/);
+    if (defined $type) {
+	$columns{$name} = $type;
+	push(@colNames, $name);
+    } else {
+	$columns{$col} = 'TEXT';
+	push(@colNames, $col);
+    }
+}
+
+my @keys = split(/\s*[\)\]]\s*/, $keys);
+my %keys;
+foreach my $k (@keys) {
+    my ($firstChar,$keyname) = ($k =~ /^(.)(.+)$/);
+    die "Bad key syntax $keyname - $firstChar" unless $firstChar =~ /[\(\[]/;
+    my $unique = ($firstChar eq '[');
+
+    $keys{$keyname} = $unique;
+}    
+
+print "BEGIN TRANSACTION;\n";
+if ($append) {
+    print map { my $keyCols = join("_", split(/\s*,\s*/, $_)); "DROP INDEX IF EXISTS ${tableName}_${keyCols}_idx;\n" } keys %keys;
+} else {
+    print "DROP TABLE IF EXISTS ${tableName};\n";
+}
+
+print "CREATE TABLE IF NOT EXISTS ${tableName} (\n";
+print join(",\n", map { "    $_ $columns{$_}" } @colNames);
+print "\n);\n";
+
+if ($pipeData) {
+    print "\\copy ${tableName} FROM STDIN CSV DELIMITER E'\\t'\n";
+    while (<$inFileFH>) {
+	print $_;
+    }
+    print "\\.\n";
+} else {
+    if ($decompress) {
+	print "\\copy ${tableName} FROM PROGRAM 'zcat $ARGV[0]' CSV DELIMITER E'\\t' HEADER\n";
+    } else {
+	print "\\copy ${tableName} FROM $ARGV[0] CSV DELIMITER E'\\t' HEADER\n";
+    }
+}
+print map { "CREATE". ($keys{$_}?" UNIQUE":"") . " INDEX ON ${tableName}($_);\n" } keys %keys;
+print "COMMIT;\n";
+
+    
+__END__
+
+=head1 NAME
+
+pgRead - generates SQL to read a datafile 
+
+=head1 SYNOPSIS
+
+pgRead [-a|-p|-z|-s] [infile[.gz]] > sql
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-z|--decompress>
+
+Force reading input as compressed. This is necessary
+if input is stdin or the file name does not end in .gz.
+
+=item B<-a|--append>
+
+Emit SQL for appending the data to an existing table.  By default, any
+existing table is dropped and a table is created before the data is
+loaded. With the -a option, the table is not dropped and the table
+is not created. Instead, the indices are dropped on the existing table
+to speed data load.
+
+With or without -a, the indices are then added after data loading.
+
+=item B<-p|--pipe>
+
+Emit SQL that will read the data from stdin. Pipe the data to stdout.
+This option is set automatically if reading from stdin.
+
+If -p is not set when a filename is specified, then the SQL will
+read from the named file.
+
+=item B<-s|--skip>
+
+Do nothing if the table already exists.
+
+=item B<-h|--help>
+
+Displays this help. Use "pod2usage -man pgRead" for full documentation.
+
+=back
+
+=head1 DESCRIPTION
+
+B<pgRead> will read a specially formatted tab-delimited file and
+output PostgreSQL for loading the file into a table.  The metadata is
+stored in the first line of the input file and its format is described
+elsewhere.
+
+THe infile is read from the command line or standard input. If the
+input file ends in .gz or the -z option is specified then the input is
+decompressed to read the meta data and the generated SQL will also
+include commands to decompress the input.
+
+By default, SQL is emitted that replaces any existing table and adds
+indices after the data is loaded. If the -a option is specified then
+indices are dropped, data is loaded into an existing table, and
+indices are added again.
+
+If -p is specified, then the data is piped to the output. This option
+is implied if the input is read from stdin. Otherwise the emitted SQL
+references the infile, which allows for data loading at a different
+time.
+
+=head1 EXAMPLES
+
+ pgRead cnv.txt > load.sql
+ pgRead cnv.txt.gz > load.sql
+ zcat cnv.txt.gz | pgRead | psql
+ pgRead -a cnv2.txt | psql
+
+=head2 Author
+
+David Kulp I<dkulp@broadinstitute.org>
+
+=cut
