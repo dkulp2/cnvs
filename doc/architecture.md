@@ -123,30 +123,17 @@ resulting segments together to achieve (100,300,CN=2).
 
 ## Data Interchange ##
 
-This architecture document expects that the steps in the pipeline
-primarily use a standard input and output data interchange. The
-standardized format described here is a modified delimited format that
-will allow rapid loading into a database table using the postgres COPY
-command, easy loading into R using read.table, easy text processing,
-and use of *tabix* for random access. Support for other databases
-such as SQLite may be provided in the future.
-
-In order to interoperate with all of these different tools, some
-compromise must be made. For example, the postgres COPY command allows
-for just a single line of header, ignored on input, and does not allow
-comment characters. R allows for the first line to contain column
-names, but no additional meta-data can be included. R can skip an
-arbitrary number of rows. Tabix allows both comment characters and
-skipping the first N lines. For Perl, AWK, etc. it's easiest to
-include metadata in a comment field.
+The steps in the CNV pipeline will primarily use a standard input and
+output data interchange. The standardized format described here is a
+modified delimited format that will allow rapid loading into a
+database table using the postgres COPY command, easy loading into R
+using read.table, easy text processing, and use of *tabix* for random
+access. Support for other databases such as SQLite may be provided in
+the future.
 
 A goal of the format is to allow the creation of a SQL table
 definition from the metadata. This can also be used in R to coerce
-data to the appropriate data types during reading using the colClasses
-option. However, there is no constraints for data integrity.
-
-In addition, for positional data, the rows should be sorted by
-chromosome, start (position or bin), end (position or bin) and sample.
+data to the appropriate data types during reading. 
 
 The proposed format is as follows:
 
@@ -193,7 +180,10 @@ In R, the metadata above would result in
 
 I/O utility programs for SQL called pgRead and pgWrite, written in
 Perl, will generate SQL that can be piped to psql. Example usage
-is `pgRead cnv.txt | psql` and `pgWrite cnv | psql -q > cnv.txt`
+is `pgRead cnv.txt | psql`, which will read the tab-delimited file
+`cnv.txt`, pass SQL to `psql` that generates the table `cnv`.
+`pgWrite cnv > cnv.txt` will read the table `cnv` from the database
+and dump its contents with a metadata header to `cnv.txt`.
 
 Two R function, tblRead, tblLoad and tblWrite, are provided in the
 'cnv' library. Usage is simply `cnv <- tblRead('cnv.txt')` and
@@ -215,3 +205,34 @@ And the file can be queried with
 Both the Perl/SQL and R routines will automatically decompress an
 input file or bgzip an output file that ends in '.gz'. Both tools also
 include options to append data.
+
+Currently supported data types map as follows, where types in
+parentheses will translate to the default type on the other side of
+the '<=>':
+
+* `TEXT (VARCHAR, CHAR) <=> character (factor)`
+* `INT <=> integer`
+* `FLOAT (DOUBLE PRECISION) <=> numeric`
+* `BOOLEAN <=> logical`
+
+### Limitations ###
+
+There is no support for dates or times, yet. 
+
+Tabix requires sorted data, but there is currently no native
+understanding of position fields and therefore no support for sorting
+output files for tabix.
+
+The read/write functions are lossy with respect to data types because
+SQL has a richer set of data types than R. Therefore, when a table is
+written to disk, read into R, written to disk and read into postgres,
+then some data types are lost - namely fixed width characters.
+
+The read/write functions do not support integrity constraints,
+including foreign keys.
+
+The database support is very specific to postgres. Support for other
+database systems are possible, but there may be unforeseen
+limitations.
+
+
