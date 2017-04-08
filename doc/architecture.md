@@ -7,23 +7,23 @@
 The primary piece of data is a *block*. A block is conceptually a
 subset of basic genomic data, which is a two-dimensional matrix of
 chromosome *regions X samples*. Thus, a block corresponds to a
-contiguous region on a chromosome and a set of samples of the
-region. Each cell in this matrix conceptually contain a sample's DNA.
+contiguous region on a chromosome and a set of samples. Each cell in
+this matrix conceptually contain a sample's DNA.
 
 ### Region ###
 
 A chromosome *region* is identified by a genome version, the
-chromosome name, a start and end position along the chromosome
-(without "chr" or similar prefix), and a bin identifier.  To avoid
-conflicts with reserved words, use "startp" and "endp" to refer to
-positions in the chromosome.
+chromosome name, a start and end position along the chromosome, and a
+bin identifier.
 
-The interval is inclusive of the start, but not the end position. Or
-you can think of the indexing as "interbase".
+To avoid conflicts with reserved words, use "startp" and "endp" to
+refer to positions in the chromosome. The interval is inclusive of the
+start, but not the end position. Or you can think of the indexing as
+"interbase".
 
-Thus, the region represented by the tuple (hg17,20,100,200)
+Thus, the region represented by the tuple `(hg17,20,100,200)`
 corresponds to the 100th through the 199th nucleotides on chromosome
-20 of build hg17.  (hg17,20,100,200) and (hg17,20,200,300) are not
+20 of build hg17.  `(hg17,20,100,200)` and `(hg17,20,200,300)` are not
 overlapping and their lengths are easily computed by subtracting.
 
 ### Bin ###
@@ -35,30 +35,34 @@ regions where alignments of sequenced reads tends to be
 ambiguous. Each bin has approximately the same entropy.
 
 For convenience finding adjacent features, bins are ordered
-integers. (*Is this acceptable?*)
+integers. (*Is this acceptable? Are bins unique across the genome?
+This would make it easier to combine results. But what about gaps
+(e.g. centromeres or across chromosomes) where bins may not be
+adjacent? For now, I'm assuming that bins are unique within a block
+and that merging data will include an additional block ID.*)
 
 ### Segment ###
 
 A *segment* is a generic extent along the genome representing one or
 more bins.  A segment is identified by a start and end bin,
-i.e. (bin1, bin2). Bins are *inclusive*.  Thus, (bin1, bin1) refers to
-a segment that spans a single bin.
+i.e. `(bin1, bin2)`. Bins are *inclusive*.  Thus, `(bin1, bin1)`
+refers to a segment that spans a single bin.
 
 ### CNV ###
 
 A *CNV* is a copy number variant segment. The CNV has the same copy
 number (*CN*) along the segment. For simplicity, sometimes the CN
 value is the wildtype, usually 2, even though it is not a variant
-value. A CNV is designated as a tuple of a segment and a CN, (bin1,
-bin2, CN), e.g.  (bin1=4960,bin2=5120,CN=3).
+value. A CNV is designated as a tuple of a segment and a CN, `(bin1,
+bin2, CN)`, e.g.  `(bin1=4960,bin2=5120,CN=3)`.
 
 ### Breakpoint ###
 
 A *breakpoint* is the location of a transition between CNVs.  It is
 represented by a single bin identifier and corresponds to the region
-at the _beginning_ of the bin. For example, given two CNVs (binA,binB)
-and (binC,binD), where binC=binB+1, then the breakpoint between these
-two CNVs is binC.
+at the _beginning_ of the bin. For example, given two CNVs
+`(binA,binB)` and `(binC,binD)`, where `binC=binB+1`, then the
+breakpoint between these two CNVs is binC.
 
 Often it's useful to annotate CNVs as a collection of breakpoints
 instead of segments. This is because breakpoints are shifted up or
@@ -68,11 +72,11 @@ of changing the end and start position within two segments.  In such
 cases, a left (upstream) and right (downstream) copy number is
 associated with each breakpoint.
 
-For example, given the CNVs (bin1=4960,bin2=5120,CN=2),
-(bin1=5121,bin2=5234,CN=1), and (bin1=5235,bin2=5411,CN=2), then the
+For example, given the CNVs `(bin1=4960,bin2=5120,CN=2)`,
+`(bin1=5121,bin2=5234,CN=1)`, and `(bin1=5235,bin2=5411,CN=2)`, then the
 CNVs can also be described by two breakpoints at 5121 and
-5235. Including the flanking CNs yields the tuples: (bin=5121, CNL=2,
-CNR=1) and (bin=5235, CNL=1, CNR=2).
+5235. Including the flanking CNs yields the tuples: `(bin=5121, CNL=2,
+CNR=1)` and `(bin=5235, CNL=1, CNR=2)`.
 
 Instead of annotating specific CNs for the left and right of a
 breakpoint, sometimes its useful to simply indicate whether the
@@ -80,8 +84,8 @@ breakpoint corresponds to an increase or decrease in copy number,
 reading from left to right. In the previous example, the second
 segment corresponds to a deletion, implying a loss ("L") of copy
 number at the first breakpoint followed by a gain ("G") at the
-second. Thus, these breakpoints would be annotated as (bin=5121,
-change=L) and (bin=5235, change=G).
+second. Thus, these breakpoints would be annotated as `(bin=5121,
+change=L)` and `(bin=5235, change=G)`.
 
 ### Profile ###
 
@@ -123,9 +127,9 @@ together.
 
 
 These functions may be chained. For example, given the segments
-(100,200,CN=2),(201,209,CN=1),(210,300,CN=2), the middle segment may
+`(100,200,CN=2),(201,209,CN=1),(210,300,CN=2)`, the middle segment may
 be filtered out due to its small size and we may want to merge the
-resulting segments together to achieve (100,300,CN=2).
+resulting segments together to achieve `(100,300,CN=2)`.
 
 ## Data Interchange ##
 
@@ -191,11 +195,12 @@ is `pgRead cnv.txt | psql`, which will read the tab-delimited file
 `pgWrite cnv > cnv.txt` will read the table `cnv` from the database
 and dump its contents with a metadata header to `cnv.txt`.
 
-Two R function, tblRead, tblLoad and tblWrite, are provided in the
-'cnv' library. Usage is simply `cnv <- tblRead('cnv.txt')` and
+Three R functions, tblRead, tblLoad and tblWrite, are provided in the
+'metaTbl' library. Usage is simply `cnv <- tblRead('cnv.txt')` and
 `tblWrite(cnv,'cnv.txt')`. tblLoad is similar to tblRead, but it does
 not return a value. Instead it creates an object in the current
-environment with the name of the table as specified in the metadata.
+environment with the name of the table as specified in the metadata,
+similar to load().
 
 There are no helper functions for tabix or generic text processing
 with perl, awk, java, etc., but usage is straightforward. For example,
@@ -232,13 +237,13 @@ output files for tabix.
 The read/write functions are lossy with respect to data types because
 SQL has a richer set of data types than R. Therefore, when a table is
 written to disk, read into R, written to disk and read into postgres,
-then some data types are lost - namely fixed width characters.
+then some data types are lost -- namely fixed width characters.
 
 The read/write functions do not support integrity constraints,
 including foreign keys.
 
 The database support is very specific to postgres. Support for other
-database systems are possible, but there may be unforeseen
+database systems is possible, but there may be unforeseen
 limitations.
 
 
@@ -247,9 +252,9 @@ limitations.
 Each *task* in the pipeline operates on a *block*. Most tasks can
 operate independently of other blocks, but are typically dependent
 on consistent blocks from task to task. For example, the
-`profileGenotyper` can run on any region, independently, but the set
+`ProfileGenotyper` can run on any region, independently, but the set
 of samples used affects the output, so subsequent tasks that work on
-the `profileGenotyper` output should work on the same samples on the
+the `ProfileGenotyper` output should work on the same samples on the
 same region.
 
 The expectation is that the input data is sliced into non-intersecting
@@ -260,7 +265,14 @@ samples because some statistical operations require multiple samples
 to generate distributions. But blocks cannot have too many samples or
 a task will take too long to run.
 
-The additional expectation is that tasks are performed on separate
+Blocks are non-overlapping. Genome partitioning may be chosen smartly
+based on large genomic features, such as centromeres, that are
+unlikely to include CNVs of interest. *(Is this OK? Resolving
+conflicts from overlapping blocks would be a hard problem to solve
+generally and isn't worth the extra work for modest gain, in my
+opinion.)*
+
+A further expectation is that tasks are performed on separate
 processors in distinct environments with fast local storage and a
 slower network file system. It may optionally have access to a local
 database and/or a networked database that is shared by multiple
@@ -297,8 +309,8 @@ dependencies, but otherwise their *job descriptions* are the same.
 
 Jobs have data and parameter dependencies. Data dependencies are
 requirements that files or tables must be generated for job input.
-Parameter dependencies refer parameter settings in previous job that
-are used in subsequent steps as well. For example, a window size 
+Parameter dependencies refer to parameter settings in a job
+that is used in a previous job.
 
 *I don't know the details of the job description and its queue and
 dependency system, yet!*
