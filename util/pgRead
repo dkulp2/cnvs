@@ -7,15 +7,20 @@ use Getopt::Long;
 use Pod::Usage;
 
 my $infile;
-my ($decompress, $append, $pipeData, $skipIfExists, $help);
+my ($decompress, $append, $pipeData, $skipIfExists, $tableNameOverride, $help, $noVacuum);
 
 GetOptions("z|decompress" => \$decompress,
 	   "a|append" => \$append,
 	   "p|pipe" => \$pipeData,
 	   "s|skip" => \$skipIfExists,
+	   "novac" => \$noVacuum,
+	   "n|name=s" => \$tableNameOverride,
 	   "h|help" => \$help) || pod2usage(2);
 pod2usage(1) if $help;
 pod2usage("$0: Too many files given.\n") unless (@ARGV <= 1);
+
+if ($skipIfExists) { die "-s unsupported. Can't figure out to conditionally execute a block of SQL.\n"; }
+
 
 $decompress |= $ARGV[0] =~ /\.gz$/;
 
@@ -49,7 +54,7 @@ my (@columns) = split(/\s*,\s*/, $columns);
 my @colNames;
 my %columns; # name => data type
 foreach my $col (@columns) {
-    my ($name, $type) = ($col =~ /(\w+)\s*\{(.+)\}/);
+    my ($name, $type) = ($col =~ /(\S+)\s*\{(.+)\}/);
     if (defined $type) {
 	$columns{$name} = $type;
 	push(@colNames, $name);
@@ -66,18 +71,22 @@ foreach my $k (@keys) {
     die "Bad key syntax $keyname - $firstChar" unless $firstChar =~ /[\(\[]/;
     my $unique = ($firstChar eq '[');
 
+    # Add quotes around all column names
+    $keyname =~ s/[\" ]//g;
     $keys{$keyname} = $unique;
 }    
 
+$tableName = $tableNameOverride if defined $tableNameOverride;
+
 print "BEGIN TRANSACTION;\n";
 if ($append) {
-    print map { my $keyCols = join("_", split(/\s*,\s*/, $_)); "DROP INDEX IF EXISTS ${tableName}_${keyCols}_idx;\n" } keys %keys;
+    print map { my $keyCols = join("_", split(',',$_)); "DROP INDEX IF EXISTS \"${tableName}_${keyCols}_idx\";\n" } keys %keys;
 } else {
     print "DROP TABLE IF EXISTS ${tableName};\n";
 }
 
 print "CREATE TABLE IF NOT EXISTS ${tableName} (\n";
-print join(",\n", map { "    $_ $columns{$_}" } @colNames);
+print join(",\n", map { "    \"$_\" $columns{$_}" } @colNames);
 print "\n);\n";
 
 if ($pipeData) {
@@ -93,8 +102,9 @@ if ($pipeData) {
 	print "\\copy ${tableName} FROM $ARGV[0] CSV DELIMITER E'\\t' HEADER\n";
     }
 }
-print map { "CREATE". ($keys{$_}?" UNIQUE":"") . " INDEX ON ${tableName}($_);\n" } keys %keys;
+print map { "CREATE". ($keys{$_}?" UNIQUE":"") . " INDEX ON ${tableName}(\"".join('","',split(',',$_))."\");\n" } keys %keys;
 print "COMMIT;\n";
+print "VACUUM ANALYZE ${tableName};\n" unless $noVacuum;
 
     
 __END__
@@ -134,9 +144,18 @@ This option is set automatically if reading from stdin.
 If -p is not set when a filename is specified, then the SQL will
 read from the named file.
 
+=item B<--novac>
+
+Do not perform a VACUUM ANALYZE after completing the data load.
+
 =item B<-s|--skip>
 
-Do nothing if the table already exists.
+Do nothing if the table already exists. Unsupported.
+
+=item B<-n|--name tablename>
+
+Override the name of the table specified in the metadata. Can include
+a schema name, e.g. "schema.table". 
 
 =item B<-h|--help>
 
@@ -172,6 +191,9 @@ time.
  pgRead cnv.txt.gz > load.sql
  zcat cnv.txt.gz | pgRead | psql
  pgRead -a cnv2.txt | psql
+
+ # dump and recreate a copy of table1 as table2
+ pgWrite table1 | pgRead -n schema2.table2 | psql
 
 =head2 Author
 

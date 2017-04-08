@@ -2,6 +2,7 @@
 
 use strict;
 use Pod::Usage;
+use Getopt::Long;
 use FileHandle;
 
 # 'psql' used instead of DBI. This is because I would need to know the
@@ -20,31 +21,43 @@ use FileHandle;
 use POSIX qw(mkfifo);
 use FileHandle;
 
-my $fifoFN = "/tmp/pgwrite.$$";
+my ($tableNameOverride, $append, $help);
+pod2usage(1) if $help;
+
+GetOptions("n|name=s" => \$tableNameOverride,
+	   "a|append" => \$append,
+	   "h|help" => \$help) || pod2usage(2);
+
+my $fifoFN = "/tmp/pgwrite.$$.".time();
 mkfifo($fifoFN, 0700) or die "$fifoFN: $!";
+pod2usage("$0: Too many files given.\n") unless (@ARGV == 1);
 
-foreach my $table (@ARGV) {
-    my $psqlFH = new FileHandle "psql -c '\\d $table' |" or die $!;
+my $table = $ARGV[0];
+$tableNameOverride = $table unless $tableNameOverride;
 
-    my $inPreamble = 1;
-    my $inIndexes = 0;
+my $psqlFH = new FileHandle "psql -c '\\d $table' |" or die $!;
 
-    my ($schema, %keys, @colNames, %columns);
-    
+my $inPreamble = 1;
+my $inIndexes = 0;
+
+my ($schema, %keys, @colNames, %columns);
+
+if (!$append) {
     while (<$psqlFH>) {
 	chomp;
 	if (/^\s+Table "(\S+)\.$table"/) { $schema = $1; }
 	if (!$inPreamble) {
 	    if ($inIndexes) {
-		last if /^$/;
-		my ($unique, $keynames) = (/\s*"\w+" (UNIQUE)?.*\((.*)\)/);
-		$keys{$keynames} = ($unique eq 'UNIQUE');
+		last unless /"/;
+		my ($unique, $keynames) = (/\s*"\S+" (UNIQUE|PRIMARY KEY)?.*\((.*)\)/);
+		$keys{$keynames} = (length($unique)>0);
 	    }
 	    else {
 		if (/^Indexes:/) {
 		    $inIndexes = 1;
 		} else {
-		    my ($colName, $colType) = (/^\s*(\w+)\s*\|\s*(\S+)/);
+		    my ($colName, $colType) = (/^\s*(\S+)\s*\|\s*(.+)\|/);
+		    $colType =~ s/\s+$//;
 		    $columns{$colName} = $colType;
 		    push(@colNames, $colName);
 		}
@@ -53,20 +66,20 @@ foreach my $table (@ARGV) {
 	if (/^[\-\+]+$/) { $inPreamble = 0; }
     }
 
-    print "#$table: ";
+    print "#$tableNameOverride: ";
     print join(',', map { "$_\{$columns{$_}\}" } @colNames);
     if (%keys) {
 	print "; ";
 	print join(' ', map { ($keys{$_}?'[':'(') . $_ . ($keys{$_}?']':')') } keys %keys ), "\n";
     }
+}
 
-    my $cmd = "psql -X -q -c \"\\copy ${table} TO '$fifoFN' CSV DELIMITER E'\\t'\" &";
-    system($cmd);
+my $cmd = "psql -X -q -c \"\\copy ${table} TO '$fifoFN' CSV DELIMITER E'\\t'\" &";
+system($cmd);
 
-    $psqlFH = new FileHandle "< $fifoFN" or die "$fifoFN: $!";
-    while (<$psqlFH>) {
-	print;
-    }
+$psqlFH = new FileHandle "< $fifoFN" or die "$fifoFN: $!";
+while (<$psqlFH>) {
+    print;
 }
 
     
@@ -80,10 +93,20 @@ pgWrite - create a delimited data file with metadata
 =head1 SYNOPSIS
 
 pgWrite table > table.txt
+pgWrite -a table2 >> table.txt
 
 =head1 OPTIONS
 
 =over 4
+
+=item B<-n|--name tablename>
+
+Replace the database table name with B<tablename> in the output file.
+
+=item B<-a|--append>
+
+Do not write the header. Intended to be used when appending to an existing
+file in the same format.
 
 =item B<-h|--help>
 
