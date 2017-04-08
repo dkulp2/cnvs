@@ -1,0 +1,3 @@
+# x : foo.baz, bar{INT}; [foo.baz,bar] (bar)
+AB	334
+CD	445
