@@ -83,6 +83,12 @@ number at the first breakpoint followed by a gain ("G") at the
 second. Thus, these breakpoints would be annotated as (bin=5121,
 change=L) and (bin=5235, change=G).
 
+### Profile ###
+
+A *profile* corresponds to a genomic alignment of read fragments to a
+reference assembly for a specific sample. A profile contains a count
+of *aligned reads per bin*. 
+
 ## Functions on Core Data ##
 
 (Include this? I've had to repeatedly deal with these issues in
@@ -124,12 +130,12 @@ resulting segments together to achieve (100,300,CN=2).
 ## Data Interchange ##
 
 The steps in the CNV pipeline will primarily use a standard input and
-output data interchange. The standardized format described here is a
-modified delimited format that will allow rapid loading into a
-database table using the postgres COPY command, easy loading into R
-using read.table, easy text processing, and use of *tabix* for random
-access. Support for other databases such as SQLite may be provided in
-the future.
+output data interchange. The standardized format described here is
+tentatively called *metaTbl*. It is a modified delimited format that
+will allow rapid loading into a database table using the postgres COPY
+command, easy loading into R using read.table, easy text processing,
+and use of *tabix* for random access. Support for other databases such
+as SQLite may be provided in the future.
 
 A goal of the format is to allow the creation of a SQL table
 definition from the metadata. This can also be used in R to coerce
@@ -236,3 +242,290 @@ database systems are possible, but there may be unforeseen
 limitations.
 
 
+## Pipeline Processes ##
+
+Each *task* in the pipeline operates on a *block*. Most tasks can
+operate independently of other blocks, but are typically dependent
+on consistent blocks from task to task. For example, the
+`profileGenotyper` can run on any region, independently, but the set
+of samples used affects the output, so subsequent tasks that work on
+the `profileGenotyper` output should work on the same samples on the
+same region.
+
+The expectation is that the input data is sliced into non-intersecting
+blocks that are small enough to run a task in a reasonable time, but
+are not too small such that the setup and breakdown of a job does not
+dominate the running time. Blocks must include a reasonable number of
+samples because some statistical operations require multiple samples
+to generate distributions. But blocks cannot have too many samples or
+a task will take too long to run.
+
+The additional expectation is that tasks are performed on separate
+processors in distinct environments with fast local storage and a
+slower network file system. It may optionally have access to a local
+database and/or a networked database that is shared by multiple
+processors.
+
+When a task starts, it reads data from a metaTbl file on shared storage
+or from a metaTbl table on a networked database. Similarly, when a job
+completes, it writes its results to shared storage or a networked
+database as a metaTbl. In this way, each task provides a permanent
+checkpoint and merges its results into a larger storage system
+containing results from multiple blocks.
+
+To simplify analysis software, each block has a unique schema in the
+shared database and a unique directory in the shared file
+system. Since blocks are independent, then analysis software and
+results can operate in separate database schemas. Visualization and
+final collection processes can easily retrieve data from multiple
+blocks by creating "meta" schema that contain views of unioned
+tables across multiple schemas.
+
+For computational speed, it's likely that multiple metaTbls will
+sometimes be copied locally. In particular, it's likely that
+multi-table database joins will run faster on local DBMS tables that
+are smaller (because they contain only a single block) and are
+operating without the contention of a shared DBMS.
+
+Each task may be composed of multiple, sequential *steps*. Multiple
+steps can be performed on a single machine using only local file
+system and/or local DBMS storage.
+
+*Tasks* and *steps* are both kinds of *jobs*, with the simple
+distinction that *steps* are smaller jobs with only local
+dependencies, but otherwise their *job descriptions* are the same.
+
+Jobs have data and parameter dependencies. Data dependencies are
+requirements that files or tables must be generated for job input.
+Parameter dependencies refer parameter settings in previous job that
+are used in subsequent steps as well. For example, a window size 
+
+*I don't know the details of the job description and its queue and
+dependency system, yet!*
+
+
+## CNV Pipeline ##
+
+The CNV pipeline is a set of serial jobs for annotating the
+breakpoints of CNVs. The initial input are *profiles* in a
+*block*. The ProfileGenotyper estimates genotypes per sample per
+bin. The genotypes are aggregated into rolling windows of
+bins. Consecutive regions of the same CN are merged into CNVs. The
+results are filtered and adjusted. Probability distributions of
+breakpoint positions are derived. Breakpoints are further adjusted and
+the final predictions reported.
+
+The following is a breakdown of the jobs involved, including their
+dependencies and parameters. No effort is made, yet, to group steps
+into tasks.
+
+### Job: Block Definition ###
+
+* Parameters:
+  * Sample Size: 100
+  * Genomic Size: 6e7
+  * Reference Genome: hg17
+* Dependencies:
+  * Reference Genome
+* Action: Partition genome
+* Output: 
+  * `Genome_Regions` (GR_ID, Chrom, StartP, EndP) - physical spans along chromosomes
+  * `Sample_Sets` (Set1, sampleA), (Set1, sampleB) - groups of samples processed independently
+
+### Job: Bin Definition ###
+
+* Parameters:
+  * Effective Bin Size (in nt): 100
+* Dependencies:
+  * `Genome_Regions`
+* Action: Create non-overlapping bins with equal effective length
+* Output:
+  * `Bin_Map` (GR_ID, Bin, Chrom, StartP, EndP, Effective Length, G+C,
+    G+C Total)
+  
+### Job: Profile Generation ###
+
+* Parameters:
+* Dependencies:
+  * `Bin_Map`
+  * `Sample_Sets`
+  * External Profile Data
+* Action: Aggregate counts using `Bin_Map`.
+* Output: 
+  * `Profile_Counts` (_Bin_, _Sample_, Observed, Expected) - summed
+    read counts
+	
+### Job: Window Generation ###
+
+* Parameters:
+  * Window Size (bins): 12
+* Dependencies:
+  * `Bin_Map`
+* Action: Create overlapping windows of *Window Size* bins
+* Output:
+  * `Window_Map` (StartB, EndB) - segments
+	
+### Job: ProfileGenotyper ###
+
+* Parameters:
+* Dependencies:
+  * `Profile_Counts`
+  * `Sample_Sets`
+  * `Window_Map`
+* Action: Run org.broadinstitute.sv.apps.ProfileGenotyper on
+  `Window_Map` segments using `Profile_Counts` in each segment. Convert
+  VCF output into simpler table, one row per sample per window.  Each
+  window is identified by the first, leftmost bin.
+* Outputs:
+  * VCF
+  * `Geno` (_StartB_, _Sample_, CN, CNQ) - genotype calls and quality per
+    sample per segment.
+
+### Job: Merge_CNV ###
+
+* Parameters:
+  * Call Percentage Threshold: 0.80 
+  * CNQ Threshold: 13 
+  * Variance Filter: (W=10, V=0.3, X=3)
+  * Span Threshold (bins): 5 
+  * NA Span Threshold (bins): 20
+* Dependencies:
+  * `Geno`
+* Actions: 
+  * Filter `Geno` segments where fraction of samples calls is below
+    *Call Percentage Threshold*.
+  * Mask `Geno` segments by setting calls to NA where
+    * CNQ is below *CNQ Threshold* or
+	* Variance of median CN in W segments is greater than V or
+	* Median is greater than X
+  * Generate contiguous CNVs as runs of segments with the same CN
+  * Remove small CNVs and join new flanking CNVs when (length
+    (in bins) of small CNV is less than *Span Threshold* or length of
+    small CN=NA CNV is less than *NA Span Threshold*) and flanking
+    CNVs have the same CN.
+* Output:
+  * `CNV_mrg` (_StartB_, _EndB_, _Sample_, CN)
+  
+### Job: Staircase ###
+
+* Parameters:
+  * Mid Segment Size (bins): 12
+* Dependencies:
+  * `CNV_mrg`
+* Action: Remove CNVs that are less than *Mid Segment Size* when
+  flanked by CNVs such that CNs are relatively {-1,0,+1} or {+1,0,-1}.
+* Output:
+  * `CNV_str` (_StartB_, _EndB_, _Sample_, CN)
+
+### Job: Scanning Window Generation ###
+
+* Parameters:
+  * Scanning Window Size (bins): 5
+* Dependencies:
+  * `Bin_Map`
+* Action: Create overlapping windows of *Scanning Window Size*
+  bins. This is the same as "Job: Window Generation", but a different
+  sized window is used for computing joint poissons.
+* Output:
+  * `Scanning_Window_Map` (StartB, EndB) - segments
+
+### Job: Likelihoods ###
+
+* Parameters:
+  * CN Range: (0.1, 1, 2, 3)
+* Dependencies:
+  * `Profile_Counts`
+  * `Sample_Sets`
+  * `Scanning_Window_Map`
+* Actions: 
+  * For each segment per sample, compute the poisson probability for
+    the observed counts in `Profile_Counts` given each CN in *CN
+    Range*.
+  * Combine adjacent pairs of segments (e.g. window of 5+5) to
+    generate joint probabilities for each possible combination of CN
+    transition. Sum over probabilities to derive gain and loss
+    probabilities.
+* Output:
+  * `Pois` (_StartB_, _Sample_, cnL0.1, cnL1, cnL2, cnL3, cnR0.1, cnR1,
+    cnR2, cnR3, Gain, Loss) - pois probabilities
+
+### Job: Maximum Likelihood Estimate of Breakpoint ###
+
+* Parameters:
+* Dependencies:
+  * `CNV_str`
+  * `Pois`
+* Actions:
+  * For each pair of CNVs in `CNV_str`, setting cnL and cnR to the CN
+    of the left and right CNVs, at each possible window of size
+    2x*Scanning Window Size* that overlaps the initially annotated
+    breakpoints, compute the joint poisson from `Pois` of a transition
+    from cnL to cnR. 
+  * Normalize across all considered positions. 
+  * Compute the maximum likelihood position, the 90% confidence
+    interval
+  * Store also the number of considered positions and the tail
+    probabilities on left and right.
+  * Adjust breakpoints to use the MLE.
+* Outputs:
+  * `CNV_mle` (_StartB_, _EndB_, _Sample_, CN, [CNVID])
+  * `Bkpt_mle` (_Bin_, _Sample_, BinRangeL, BinRangeR, BinCIL, BinCIR,
+    CNVID\_L, CNVID\_R, LossGain)
+
+### Job: Collapse CNVs ###
+
+* Parameters:
+* Dependencies:
+  * `CNV_mle`
+  * `Bkpt_mle`
+* Action:
+  * For all gain (loss) breakpoints in `Bkpt_mle`, generate bounds of
+    possible gain (loss), by collapsing all overlapping non-wildtype
+    CNVs.
+* Output:
+  * `Bkpt_Range` (_StartB_, _EndB_, [RangeID]) - a range of possible
+    breakpoint positions
+  * `Bkpt_Range_CNV` (RangeID, CNVID) - the CNVs that contributed to the
+    computed range.
+
+### Job: Prior Regions ###
+
+* Parameters:
+  * Extend Window Size: 10
+* Dependencies:
+  * `Bkpt_Range`
+  * `Bkpt_Range_CNV`
+  * `Bkpt_mle`
+  * `Pois`
+* Actions:
+  * For each candidate breakpoint per sample in `Bkpt_mle`, if there
+    is an overlapping `Bkpt_Range`, then for each sample in the range
+    (from `Bkpt_Range_CNV`), retrieve the gain (loss) probabilities
+    from `Pois` for every position in that range (extending +/-
+    *Extend Window Size*).
+  * Compute the mean normalized probability of gain (loss) at each
+	position in the range.
+* Outputs:
+  * `Prior` (RangeID, Bin, Loss.u, Gain.u, NC.u)
+
+### Job: Posterior ###
+
+* Parameters:
+  * Breakpoint Search Window Size: 10
+  * Prior Blend: N/A
+* Dependencies:
+  * `Bkpt_mle`
+  * `Pois`
+  * `Prior`
+* Actions:
+  * For each candidate breakpoint sample in `Bkpt_mle`, retrieve the
+    gain (loss) probabilities for that sample in a window of +/-
+    *Breakpoint Search Window Size* around position
+  * Retrieve the corresponding prior probability for gain (loss) and
+    pairwise multiply. (Blend "external" and "internal" priors.)
+  * Choose the maximum a posterior position and the 90% confidence
+    interval
+  * Adjust CNV intervals according to MAP
+* Outputs:
+  * `Posterior_Dist` (_Bin_, _Sample_, Loss.p, Gain.p, NC.p)
+  * `CNV_map` (_StartB_, _EndB_, _Sample_, CN)
