@@ -1,0 +1,8 @@
+#!/bin/sh
+#
+# tableExists tablename
+#
+# returns non-zero exit code if table $1 exists
+# expects environment variables to be set for correct db connection
+
+psql -c "select '$1'::regclass" >& /dev/null
