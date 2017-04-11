@@ -20,7 +20,8 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1B_1Apr2017_binspaceb")
+# cmd.args <- c('/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1B_1Apr2017_binspaceb/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt','smlcsm','data_sfari_batch1B_1Apr2017_binspaceb','data_sfari_batch1B_1Apr2017_binspaceb','0.7','10')
 # cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','gpc_wave2_batch1','gpc_wave2_batch1','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
@@ -94,12 +95,13 @@ conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
 # Compute posterior and return CI.
 mk.posterior <- function(df, pos, change) {
   
+  bin <- posToBin(df$chr, pos)
+
   if (change=='N') {
-    return(data.frame(best=pos, conf.L=pos, conf.R=pos, pos=pos, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+    return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
   }
   
                                         # load likelihoods for this sample
-  bin <- posToBin(df$chr, pos)
   binL <- bin - 2*PAD
   binR <- bin + 2*PAD
   bkpts <- dbGetQuery(db$con, sprintf("SELECT b.chr, b.bkpt_bin as bin, b.sample, loss_ll, gain_ll, no_bkpt_ll, b.label FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s' ORDER BY b.chr, b.bkpt_bin", 
@@ -248,13 +250,15 @@ dbGetQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
 if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle") }
-dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.best.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.best.bin","end.binCI.L","end.binCI.R")]))
+dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
 cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
 
 # convert all coordinates to genomic for compatibility with other "cn.segs.merged" tables
 cn.segs.merged <- mutate(cnvs.post,
+                         start.binCI.L=start.CI.L, start.bin=start.map, start.binCI.R=start.CI.R,
+                         end.binCI.L=end.CI.L, end.bin=end.map, end.binCI.R=end.CI.R, 
                          start.CI.L=binToPos(start.CI.L), start.map=binToPos(start.map), start.CI.R=binToPos(start.CI.R),
                          end.CI.L=binToPos(end.CI.L), end.map=binToPos(end.map), end.CI.R=binToPos(end.CI.R))
 
