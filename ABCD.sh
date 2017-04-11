@@ -1,7 +1,7 @@
 #!/bin/sh
 # run a test on a quartet set and set output to use most recent git tag
 
-export TAG=1Apr2017_binspace
+export TAG=11Apr2017
 echo Using tag: ${TAG}
 
 for Q in A B C D; do
