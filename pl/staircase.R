@@ -116,7 +116,7 @@ conf.int <- function(p, conf=0.95) {
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
-  # df <- csm[csm$.id=='SSC00003',]
+  # df <- csm[csm$.id=='SSC00115',]
   sample <- df$.id[1]
   message(Sys.time(),": Computing MLE boundaries for ",sample)
   
@@ -185,6 +185,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
 
   # replace old values of start.map, end.map, start.bin, end.bin and add interval data.
   # all these ifelse statements simply replace rows only where cn is not NA.
+  # If we worked in breakpoints instead of CNVs, then this would be simpler.
   df$end.map <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$pos,NA))
   df$end.map.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$left.bound,NA))
   df$end.map.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$right.bound,NA))
@@ -193,7 +194,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$end.map.R.tail <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$right.tail,NA))
   df$end.bin.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binL,NA))
   df$end.bin.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binR,NA))
-  df$end.bin <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$best.bin,NA))
+  df$end.bin <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.bin, c(new.bounds$best.bin,NA))
   df$end.binCI.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.L,NA))
   df$end.binCI.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.R,NA))
   
@@ -205,9 +206,55 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$start.map.R.tail <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$right.tail))
   df$start.bin.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binL))
   df$start.bin.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binR))
-  df$start.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$best.bin))
+  df$start.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.bin, c(NA, new.bounds$best.bin))
   df$start.binCI.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.L))
   df$start.binCI.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.R))
+
+  # It is possible that small CNVs have breakpoint bounds that have reversed order because the window scans beyond the size of the CNV.
+  # Remove those CNVs.
+  if (any(df$end.bin < df$start.bin)) {
+    message(Sys.time(), ": Removing ",length(which(df$end.bin<df$start.bin)), " CNVs where adjusted end points eliminated a small CNV.")
+    df <- filter(df, end.bin >= start.bin)
+  }
+
+  # It is possible that end.bin < start.bin at this point because a small CNV is eliminated and the bounds overlap, e.g.
+  # Previously: 11111111111111333322222222222
+  # Now:        11111111111111111111
+  #                              222222222222
+
+  # For now, punt and resolve by just choosing the end position of the first segment and choosing the CI based on the left
+  #             11111111111111111111222222222
+  # Only do this for non-NAs
+  # FIXME: The fix should be to better factor ml.transition2 and apply it twice: once to all segments and a second time to just the overlapping ones.
+  # FIXME: We now may, again, have adjacent segments of the same CN, usually CN=2, which should be merged.
+
+  if (nrow(df) > 1) {
+    idx <- 1:(nrow(df)-1)
+
+    # row numbers of left CNV of conflicting breakpoints
+    trouble <- which(df$end.bin[idx] > df$start.bin[idx+1] & !is.na(df$cn[idx]) & !is.na(df$cn[idx+1]))
+
+    if (length(trouble)>0) {
+      message(Sys.time(), sprintf(": FIXME. %s has %s conflicting breakpoints (overlapping flanking CNVs) after MLE adjustments.", sample, length(trouble)))
+      if (any(df$cn[trouble]==df$cn[trouble+1])) {
+        message(Sys.time(), ": FIXME. And some of these conflicting breakpoints have the same CN and should be merged.")
+      }
+    }
+
+    # set start of right CNV to end of left CNV
+    df$start.map[trouble+1] <- df$end.map[trouble]
+    df$start.bin[trouble+1] <- df$end.bin[trouble]
+    df$start.map.L[trouble+1] <- df$end.map.L[trouble]
+    df$start.map.R[trouble+1] <- df$end.map.R[trouble]
+    df$start.map.win.size[trouble+1] <- df$end.map.win.size[trouble]
+    df$start.map.L.tail[trouble+1] <- df$end.map.L.tail[trouble]
+    df$start.map.R.tail[trouble+1] <- df$end.map.R.tail[trouble]
+    df$start.bin.L[trouble+1] <- df$end.bin.L[trouble]
+    df$start.bin.R[trouble+1] <- df$end.bin.R[trouble]
+    df$start.bin[trouble+1] <- df$end.bin[trouble]
+    df$start.binCI.L[trouble+1] <- df$end.binCI.L[trouble]
+    df$start.binCI.R[trouble+1] <- df$end.binCI.R[trouble]
+  }
 
   df$cn.2 <- ifelse(is.na(df$cn), 2, df$cn)
   df$dCN.R <- c(df$cn.2[2:nrow(df)]-df$cn.2[1:(nrow(df)-1)],2-df$cn.2[nrow(df)])
@@ -225,7 +272,7 @@ cn.segs.merged <- mutate(csm.new,
                          seg=sprintf("SEG_%s_%s_%s", chr, start.map, end.map),
                          label=sprintf("%s_%s",seg,.id))
 
-message(Sys.time(), "Saving smlcsm")
+message(Sys.time(), ": Saving smlcsm")
 save(cn.segs.merged, file=sprintf("%s.smlcsm.Rdata",cnv.seg.fn))
 write.table(select(cn.segs.merged, .id, seg, chr, start.map, end.map, copy.number), file=sprintf("%s.sml.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.map), start.map.R, end.map.L, as.integer(end.map), end.map.R, copy.number), file=sprintf("%s.smlCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
