@@ -65,7 +65,7 @@ if (dbExistsTable(db$con, "pois")) {
    invisible(dbGetQuery(db$con, "DROP TABLE pois"))
 }
 if (dbExistsTable(db$con, "bkpt")) {
-   invisible(dbGetQuery(db$con, "DROP TABLE bkpt");)
+   invisible(dbGetQuery(db$con, "DROP TABLE bkpt"))
 }
 
 bin.map <- dbGetQuery(db$con, "select * from profile_segment")
