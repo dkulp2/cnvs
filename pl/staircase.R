@@ -18,8 +18,8 @@ library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1A_1Apr2017_binspace")
-# cmd.args <- c('/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1A_1Apr2017_binspace/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt','csm','5','12','10','data_sfari_batch1A_1Apr2017_binspace')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_11apr2017b")
+# cmd.args <- c('/home/unix/dkulp/data/out/11Apr2017/data_sfari_batch1C_11Apr2017b/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt','csm','5','12','10','data_sfari_batch1C_11Apr2017b')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 max.join <- as.numeric(cmd.args[3])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
@@ -48,6 +48,7 @@ csm <- ddply(csm, .(.id, chr), function(df) {
     adj.idx <- first(which(adj))
     df[adj.idx, 'end.i'] <- df[adj.idx+1, 'end.i']
     df[adj.idx, 'end.map'] <- df[adj.idx+1, 'end.map']
+    df[adj.idx, 'end.bin'] <- df[adj.idx+1, 'end.bin']
     df[adj.idx, 'label'] <- paste0(df[adj.idx, 'label'], '_', df[adj.idx+1, 'label'])
     df <- df[-c(adj.idx+1),]
     idx <- 1:(nrow(df)-1)
@@ -117,6 +118,7 @@ conf.int <- function(p, conf=0.95) {
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
   # df <- csm[csm$.id=='SSC00115',]
+  # df <- csm[csm$.id=='SSC03794',]
   sample <- df$.id[1]
   message(Sys.time(),": Computing MLE boundaries for ",sample)
   
