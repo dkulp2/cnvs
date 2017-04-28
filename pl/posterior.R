@@ -20,7 +20,8 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1B_1Apr2017_binspaceb")
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1D_11Apr2017b")
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/11Apr2017/data_sfari_batch1D_11Apr2017b/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt smlcsm data_sfari_batch1D_11Apr2017b data_sfari_batch1D_11Apr2017b 0.7 10',' '))
 # cmd.args <- c('/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1B_1Apr2017_binspaceb/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt','smlcsm','data_sfari_batch1B_1Apr2017_binspaceb','data_sfari_batch1B_1Apr2017_binspaceb','0.7','10')
 # cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','gpc_wave2_batch1','gpc_wave2_batch1','.7', '10')
 cnv.seg.fn <- cmd.args[1]
@@ -228,16 +229,19 @@ if (dbExistsTable(db$con, "posterior_dist")) {
 #pv <- profvis({
   res <-
     ddply(filter(cnvs, cn!=2), .(label), function(df) {
-      cat(df$label,"\n")
-      if (nrow(df) > 1) {
-        print("BUG: FIx Me. Should only be one row per label from staircase.R")
-        print(df) 
-      }
-      else {
-        posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
-        posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
-        return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
-      }
+        cat(df$label,"\n")
+        label.pieces <- unlist(strsplit(df$label, '_'))
+        if (label.pieces[3] == label.pieces[4]) {
+            print("FIXME: Empty region")
+        } else if (nrow(df) > 1) {
+            print("BUG: FIx Me. Should only be one row per label from staircase.R")
+            print(df) 
+        }
+        else {
+            posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
+            posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
+            return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
+        }
     })
 #})
 
