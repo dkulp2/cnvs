@@ -267,6 +267,30 @@ csm.new <- ddply(csm, .(.id), function(df) {
   df$start.i <- NULL
   df$end.i <- NULL
   
+  # FIXME: AND! there are still conflicting segments where the same bp is chosen from different starting points.
+  #   22222222222223344888666333222222222
+  #   AAAAAAAAAAAAABBCCDDDEEEFFFGGGGGGGGG
+  # Results in:
+  #   22222222222223344888666333222222222
+  #                B
+  #                C
+  #                DD
+  # I think it's possible for new breakpoints to conflict and that overlapping
+  # is not predictable. So sort results to find overlaps and remove them.
+  # The CN=NA rows were not adjusted, so they may overlap, although not a problem.
+    df <- arrange(df, start.bin, end.bin)
+    df$ovlp <- c(df$end.bin[idx] > df$start.bin[idx+1] & !is.na(df$cn[idx]) & !is.na(df$cn[idx+1]),FALSE)
+  # Because the MLE is performed per breakpoint, it's possible that a 
+  # segment is length zero because a pair of breakpoints both optimized to the same position.
+  # If so, then segment is length 0. 
+    df$zlen <- df$end.bin - df$start.bin == 0
+    fail <- df$ovlp | df$zlen
+    if (any(fail)) {
+        message(Sys.time(), sprintf(": %s segments either overlapped or had zero length. Removing", sum(fail)))
+        df <- df[!fail,]
+    }
+
+
   return(df)
 })
 
