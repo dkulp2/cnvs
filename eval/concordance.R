@@ -9,6 +9,7 @@ library(RColorBrewer)
 library(sqldf)
 library(grid)
 library(magrittr)
+library(zoo)
 
 psegs <- read.table("C:\\cygwin64\\home\\dkulp\\data\\tmp\\profile_segments.txt")[,1:4]
 colnames(psegs) <- c('bin','chr','start','end')
@@ -17,6 +18,8 @@ psegs[1,'start'] <- 1
 big2 <- 200  # any region greater than big2 nts that is CN=2 for all samples is replaced by a small region
 big2.replacement <- 5 # the size of the new CN=2 region
 MIN.CNV.LEN <- 12
+#USE_BINS <- FALSE
+USE_BINS <- TRUE
 
 # load data ########################
 # basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI'
@@ -26,6 +29,9 @@ MIN.CNV.LEN <- 12
 
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.12Mar2017_test'
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.1Apr2017'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.11Apr2017'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.11Apr2017b'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.27April2017'
 
 sibs <- c('dataA','dataB')
 parents <- c('dataC','dataD')
@@ -103,50 +109,67 @@ load.cnvs <- function(d) {
   }
   new.cnvs <- 
     ddply(cn.segs.merged, .(.id, chr), function(df) {
-      cat(first(df$.id),"\n")
-      df <- arrange(filter(df, end.bin-start.bin > MIN.CNV.LEN), start.map)
-      row.range <- 2:nrow(df)
-      gap.pre <- which(df$start.map[row.range] > df$end.map[row.range-1])+1
-      if (length(gap.pre)>0) {
-        lbound <- df$end.map[gap.pre-1]
-        rbound <- df$start.map[gap.pre]
-        between <- data.frame(label=paste0(df$label[gap.pre],'G'), 
-                              start.CI.L=lbound, start.map=lbound, start.CI.R=lbound,
-                              end.CI.L=rbound, end.map=rbound, end.CI.R=rbound, cn=2)
-      } else { between <- data.frame() }
-      
-      ovlps <- which(df$start.map[row.range] < df$end.map[row.range-1])+1
-      if (length(ovlps) > 0) {
-        cat(sprintf("FIXME: Removing %s overlapping predictions in %s\n", length(ovlps), first(df$.id)))
-        print(df[ovlps,])
-        df <- df[-ovlps,]
+      sample.id <- first(df$.id)
+      chr <- first(df$chr)
+      cat(sample.id,"\n")
+      if (USE_BINS) {
+        df <- arrange(filter(df, end.bin-start.bin > MIN.CNV.LEN), start.map)
+      } else {
+        df <- arrange(filter(df, end.map-start.map > MIN.CNV.LEN*100), start.map)
+      }
+      if (nrow(df)<=1) {
+        between <- data.frame()
+      } else {
         row.range <- 2:nrow(df)
+        gap.pre <- which(df$start.map[row.range] > df$end.map[row.range-1])+1
+        if (length(gap.pre)>0) {
+          lbound <- df$end.map[gap.pre-1]
+          rbound <- df$start.map[gap.pre]
+          between <- data.frame(label=paste0(df$label[gap.pre],'G'), 
+                                start.CI.L=lbound, start.map=lbound, start.CI.R=lbound,
+                                end.CI.L=rbound, end.map=rbound, end.CI.R=rbound, cn=2)
+        } else { between <- data.frame() }
+        
+        ovlps <- which(df$start.map[row.range] < df$end.map[row.range-1])+1
+        if (length(ovlps) > 0) {
+          cat(sprintf("FIXME: Removing %s overlapping predictions in %s\n", length(ovlps), first(df$.id)))
+          print(df[ovlps,])
+          df <- df[-ovlps,]
+          row.range <- 2:nrow(df)
+        }
+        
+        
+        # sometimes the same CN has adjacent segments.
+        adjacents <- which(df$start.map[row.range]==df$end.map[row.range-1] &
+                             df$cn[row.range]==df$cn[row.range-1]) + 1
+        #       if (length(adjacents) > 2) {
+        #         adj.range <- 2:(length(adjacents)-1)
+        #         tweens <- adjacents[adj.range]==adjacents[adj.range-1]+1 & adjacents[adj.range]==adjacents[adj.range+1]-1
+        # #        stopifnot(all(!tweens)) # do a closure and remove tweens
+        #       }
+        if (length(adjacents) > 0) {
+          cat(sprintf("FIXME: Adjacent calls for %s with same CN\n", first(df$.id)))
+          df$end.CI.L[adjacents-1] <- df$end.CI.L[adjacents]
+          df$end.CI.R[adjacents-1] <- df$end.CI.R[adjacents]
+          df$end.map[adjacents-1] <- df$end.map[adjacents]
+          df <- df[-adjacents,]
+        }
       }
       
-      # sometimes the same CN has adjacent segments.
-      adjacents <- which(df$start.map[row.range]==df$end.map[row.range-1] &
-                           df$cn[row.range]==df$cn[row.range-1]) + 1
-      if (length(adjacents) > 2) {
-        adj.range <- 2:(length(adjacents)-1)
-        tweens <- adjacents[adj.range]==adjacents[adj.range-1]+1 & adjacents[adj.range]==adjacents[adj.range+1]-1
-#        stopifnot(all(!tweens)) # do a closure and remove tweens
+      if (nrow(df) > 0) {
+        rbind(data.frame(label=paste0(sample.id,'_START'),
+                         start.CI.L=1, start.map=1, start.CI.R=1,
+                         end.CI.L=df$start.map[1], end.map=df$start.map[1], end.CI.R=df$start.map[1], cn=2),
+              between,
+              select(subset(df,select=-c(.id, chr)), label, start.CI.L, start.map, start.CI.R, end.CI.L, end.map, end.CI.R, cn),
+              data.frame(label=paste0(sample.id,'_END'),
+                         start.CI.L=df$end.map[nrow(df)], start.map=df$end.map[nrow(df)], start.CI.R=df$end.map[nrow(df)],
+                         end.CI.L=chrom.max(df$chr[1]), end.map=chrom.max(df$chr[1]), end.CI.R=chrom.max(df$chr[1]), cn=2))
+      } else {
+        data.frame(label=paste0(sample.id,'_START_END'),
+                   start.CI.L=1, start.map=1, start.CI.R=1,
+                   end.CI.L=chrom.max(chr), end.map=chrom.max(chr), end.CI.R=chrom.max(chr), cn=2)
       }
-      if (length(adjacents) > 0) {
-        cat(sprintf("FIXME: Adjacent calls for %s with same CN\n", first(df$.id)))
-        df$end.CI.L[adjacents-1] <- df$end.CI.L[adjacents]
-        df$end.CI.R[adjacents-1] <- df$end.CI.R[adjacents]
-        df$end.map[adjacents-1] <- df$end.map[adjacents]
-        df <- df[-adjacents,]
-      }
-      
-      rbind(data.frame(label=paste0(df$.id[1],'_START'),
-                       start.CI.L=1, start.map=1, start.CI.R=1,
-                       end.CI.L=df$start.map[1], end.map=df$start.map[1], end.CI.R=df$start.map[1], cn=2),
-            between,
-            subset(df,select=-c(.id, chr)),
-            data.frame(label=paste0(df$.id[1],'_END'),
-                       start.CI.L=df$end.map[nrow(df)], start.map=df$end.map[nrow(df)], start.CI.R=df$end.map[nrow(df)],
-                       end.CI.L=chrom.max(df$chr[1]), end.map=chrom.max(df$chr[1]), end.CI.R=chrom.max(df$chr[1]), cn=2))
     })
   return(arrange(new.cnvs, .id, chr, start.map))
 }
@@ -189,7 +212,9 @@ ddply(quartets, .(family), function(fam) {
     if (nrow(sib1)>0 && nrow(sib2)>0) {
       par2 <- arrange(filter(cnvs.parents[[2]], .id==fam$father & chr==chr), start.map) # By convention it appears that father is "D" data set and mother is "C"
       par1 <- arrange(filter(cnvs.parents[[1]], .id==fam$mother & chr==chr), start.map)
-      stopifnot(nrow(par1)>0 && nrow(par2)>0)
+      if (nrow(par1)==0 || nrow(par2)==0) {
+        warning(Sys.time(),sprintf(": No CNVs predicted for at least one parent. P=%s M=%s", fam$father, fam$mother))
+      }
       
       ibd.fam.chr <- arrange(filter(ibd.fam, CHR==chr), START)
       sib1.idx <- sib2.idx <- par1.idx <- par2.idx <- ibd.idx <- 1
@@ -441,6 +466,9 @@ sa1 <- filter(segs.all[[1]], !is.na(ibd.state) & cnv=='DEL')
 print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
         geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)))
 
+# print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
+#         geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)) + xlm)
+
 # display density of CNVs
 z2<-
   ldply(c(TRUE,FALSE), function(conc) {
@@ -453,7 +481,9 @@ z2<-
 #z2$min.length <- as.factor(z2$min.len)
 #ggplot(z2, aes(x=location, color=min.length)) + geom_density()
 z3 <- tally(group_by(z2, min.len, conc, location))
-ggplot(filter(z3), aes(x=location, y=n, color=conc)) + geom_step() + facet_grid(min.len+conc~., scales = "free_y")
+
+# Expensive plot:
+#ggplot(filter(z3), aes(x=location, y=n, color=conc)) + geom_step() + facet_grid(min.len+conc~., scales = "free_y")
 
 # display location of CNVs. Only the largest CNVs are visible
 #print(ggplot(filter(segs, !all.eq), aes(x=start, xend=end, y=fam, yend=fam, color=all.eq)) + geom_segment(size=10) + theme_bw() + geom_blank() + theme(panel.grid.major.y=element_blank(), panel.grid.major.x=element_blank(), panel.grid.minor.y = element_blank(), legend.position="none"))
@@ -472,6 +502,16 @@ bad.loci <- list(
   c(1.2341e7, 1.23445e7,6),
   c(5.4325e6,5.4355e6,7),
   c(1.585e6,1.592e6,8))
+
+bad.loci <- list(
+  c(.158e7,.16e7,1),
+  c(.6296e7,.6297e7,2),
+  c(2.575e7,2.581e7,3),
+  c(2.949e7,2.951e7,4),
+  c(4.124e7,4.125e7,5),
+  c(6.05175e7,6.0519e7,6)
+  
+)
 
 pdf("discordant_loci.pdf")
 lapply(bad.loci, function(ab) {
@@ -560,6 +600,8 @@ excl.order <- rev(c(6,7,2,5,1,4,3))
 # put #5 first
 excl.order <- rev(c(6,7,2,1,4,3,5))
 
+excl.order <- c(1,6,2,4,3)
+
 segs.ex <- list(segs)
 lapply(excl.order, function(i) {
   segs.ex[[length(segs.ex)+1]] <<- excl.loci(segs.ex[[length(segs.ex)]], bad.loci[[i]])  
@@ -576,7 +618,7 @@ rocs2 <- ldply(1:length(excl.label), function(i) {
 p5 <- ggplot(filter(rocs2, cnv %in% c('DEL')), 
              aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
 print(p5)
-print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)) + ggtitle("Rank #5 first"))
+print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)))  # + ggtitle("Rank #5 first"))
 
 write.table(select(segs, family, sib1, sib2, mother, father, chr, start, end, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
