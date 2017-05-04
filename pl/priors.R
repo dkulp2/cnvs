@@ -120,6 +120,10 @@ save.prior <- function(bkpt.prior, chr, seg, samples, label, n, total.samples, s
   
 }
 
+# drop both tables.
+if (dbExistsTable(db$con, "prior_region")) invisible(dbGetQuery(db$con, "DROP TABLE prior_region cascade"))
+if (dbExistsTable(db$con, "prior")) invisible(dbGetQuery(db$con, "DROP TABLE prior cascade"))
+
 # for each start.map and stop.map 
 #  retrieve the prior data for the samples in the cluster
 ddply(cnvx, .(chr,seg,side,change), function(df) {

@@ -12,8 +12,10 @@ median.var.max <- 0.3
 median.max <- 3
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
+
  # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq")
  # cmd.args <- c("/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/windows.vcf.gz.txt",'0.80','20','5',"/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug")
+# cmd.args <- c("/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1C_1Apr2017_binspaceb/B12.L5.Q13.W10.PB0.7.ML2400/windows.vcf.gz.txt","0.80","13","5","/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1A_1Apr2017_binspaceb/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt")
 cnv.geno.fn <- cmd.args[1]
 pass.thresh <- as.numeric(cmd.args[2])  # e.g. .80. Drop sites entirely if less than pass.thresh % of samples have FT ("per-sample genotype filter") of PASS
 qual.thresh <- as.numeric(cmd.args[3]) 		# CNQ phred-style threshold, e.g. 20
@@ -118,15 +120,18 @@ new.extents <-
     new.adj <- rep(NA,nrow(cs))
     i <- i2 <- 1  # i is the left-most extent and i2 is the right-most extent of the same cn
     cn.i <- cs$copy.number[i]
+    end.bin.i <- cs$end.bin[i]
     j <- i+1
     while (j <= nrow(cs)) {
-      if (j-i > max.join) {
+      if (cs$start.bin[j]-end.bin.i > max.join) {
         new.adj[i] <- i2
         i <- i2+1
         i2 <- i
         cn.i <- cs$copy.number[i]
+        end.bin.i <- cs$end.bin[i]
         j <- i
       } else if (cs$copy.number[j]==cn.i) {
+        end.bin.i <- cs$end.bin[j] # new rightmost position of current copy number extent
         i2 <- j
       }
       j <- j + 1
