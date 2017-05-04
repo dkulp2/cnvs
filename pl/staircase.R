@@ -18,8 +18,8 @@ library(dplyr)
 library(RPostgreSQL)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
-# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','csm','5','12','10','gpc_wave2_batch1')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_27apr2017")
+# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','csm','5','12','10','data_sfari_batch1C_27Apr2017')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 max.join <- as.numeric(cmd.args[3])  # size (in bins) of runs to span if flanking calls are the same, e.g. 5
