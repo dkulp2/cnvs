@@ -1,8 +1,7 @@
 #!/bin/sh
 # run a test on a quartet set and set output to use most recent git tag
 
-# most recent source code tag
-export TAG=`git tag -l | tail -1`
+export TAG=11Apr2017
 echo Using tag: ${TAG}
 
 for Q in A B C D; do

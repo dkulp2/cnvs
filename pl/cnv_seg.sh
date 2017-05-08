@@ -77,58 +77,66 @@ fi
 if [ ! -f ${SITES} ]; then
     eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
 fi
-#eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS2} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES_HIRES}
 
 # generate first pass genotypes of rolling windows
-time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
-    org.broadinstitute.sv.apps.ProfileGenotyper \
-    -configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
-    -R `cygpath.shim -w ${referenceFile}` \
-    -profile `cygpath.shim -w ${profileFile}` \
-    -ploidyMapFile `cygpath.shim -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
-    -segmentFile `cygpath.shim -w ${SITES}` \
-    -sample `cygpath.shim -w ${SAMPLES}` \
-    -O `cygpath.shim -w ${OUT1_VCF}` 
+if [ ! -f ${OUT1_VCF} ]; then
+    time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
+	org.broadinstitute.sv.apps.ProfileGenotyper \
+	-configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
+	-R `cygpath.shim -w ${referenceFile}` \
+	-profile `cygpath.shim -w ${profileFile}` \
+	-ploidyMapFile `cygpath.shim -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
+	-segmentFile `cygpath.shim -w ${SITES}` \
+	-sample `cygpath.shim -w ${SAMPLES}` \
+	-O `cygpath.shim -w ${OUT1_VCF}` 
+fi
 
-# # # run a second time with smaller windows
-# # time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
-# #     org.broadinstitute.sv.apps.ProfileGenotyper \
-# #     -configFile `cygpath.shim -w ${SV_DIR}/conf/genstrip_parameters.txt` \
-# #     -R `cygpath.shim -w ${referenceFile}` \
-# #     -profile `cygpath.shim -w ${profileFile}` \
-# #     -segmentFile `cygpath.shim -w ${SITES_HIRES}` \
-# #     -sample `cygpath.shim -w ${SAMPLES}` \
-# #     -O `cygpath.shim -w ${OUT1_VCF_HIRES}` 
-
-# # convert VCF to a simpler delimited file
-zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
-# #zcat ${OUT1_VCF_HIRES} | ${VCF2TAB} > ${OUT1_VCF_HIRES}.txt
+if [ ! -f ${OUT1_VCF}.txt ]; then
+    zcat ${OUT1_VCF} | ${VCF2TAB} > ${OUT1_VCF}.txt
+fi
 
 # basic CNV prediction
-time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
+# WRITES to csm, cnvgeno files and cnv_mrg and geno tables
+if [ ! -f ${CNV_SEG_SITES_FILE}.csm.Rdata ]; then
+    time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
+fi
 
 # generate poisson probs
-time Rscript ${LIKELIHOODS} ${OUT1_VCF}.txt ${DBCONN} ${MLE_WINSIZE} ${LABEL}
+# WRITES pois and bkpt tables
+if ! tableExists pois || ! tableExists bkpt; then
+    time Rscript ${LIKELIHOODS} ${OUT1_VCF}.txt ${MLE_WINSIZE} ${LABEL}
+fi
 
 # filter and adjust
-time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${DBCONN} ${SPAN_THRESH} $((BIN_SIZE * NBINS)) ${MLE_WINSIZE} ${LABEL} 1>&2
+# WRITES smlcsm file
+if [ ! -f ${CNV_SEG_SITES_FILE}.smlcsm.Rdata ]; then
+    time Rscript ${STAIRCASE} ${CNV_SEG_SITES_FILE} csm ${SPAN_THRESH} ${NBINS} ${MLE_WINSIZE} ${LABEL} 1>&2
+fi
 
 # generate a collapse "site" set => smlx2csm
-time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm flt smlx2csm
+# WRITES smlcsm, scmlxcsm, smlx2csm files
+if [ ! -f ${CNV_SEG_SITES_FILE}.smlx2csm.Rdata ]; then
+    time Rscript ${COLLAPSE} ${CNV_SEG_SITES_FILE} smlcsm smlxcsm flt smlx2csm
+fi
 
 # generate prior distros
-time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${DBCONN} ${LABEL} ${MLE_WINSIZE}
+# WRITES prior and prior_region tables
+if ! tableExists prior || ! tableExists prior_region; then
+    time Rscript ${PRIORS} ${CNV_SEG_SITES_FILE} smlx2csm ${LABEL} ${MLE_WINSIZE}
+fi
 
-time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${DBCONN} ${INT_LABEL} ${EXT_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
+# combine prior and likelihood to generate posterior
+# WRITES bayescsm file and cnv_mle, cnv_post tables
+if [ ! -f ${CNV_SEG_SITES_FILE}.bayescsm.Rdata ]; then
+    time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${INT_LABEL} ${EXT_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
+fi
 
 # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
-sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
-bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
-tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
-
-#sort -k2n,3n ${CNV_SEG_SITES_FILE2}.cnvgeno.txt > ${CNV_SEG_SITES_FILE2}.cnvgeno.srt
-#bgzip -f ${CNV_SEG_SITES_FILE2}.cnvgeno.srt
-#tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE2}.cnvgeno.srt.gz
+if [ ! -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz ]; then
+    sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
+    bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
+    tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
+fi
 
 # create a row per sample deletion for input into R
 if [ -f $gsdelFile ]; then 
