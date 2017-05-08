@@ -59,6 +59,11 @@ binToPos <- function(bin) {
     df$start_pos + (df$end_pos - df$start_pos) %/% 2
 }
 
+# return a null-op / no change posterior
+nc <- function(bin) {
+  return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+}
+
 fetch.prior <- function(label, chr, pos, change) {
   bin <- posToBin(chr, pos)
   dbGetQuery(db$con, sprintf("SELECT p.*, pr.* FROM prior p, prior_region pr 
@@ -95,12 +100,10 @@ conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
 # Blend priors.
 # Merge likelihood and priors, dealing with missing data in overlap.
 # Compute posterior and return CI.
-mk.posterior <- function(df, pos, change) {
+mk.posterior <- function(df, bin, change) {
   
-  bin <- posToBin(df$chr, pos)
-
   if (is.na(change) || change=='N') {
-    return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+    return(nc(bin))
   }
   
                                         # load likelihoods for this sample
@@ -109,10 +112,10 @@ mk.posterior <- function(df, pos, change) {
   bkpts <- dbGetQuery(db$con, sprintf("SELECT b.chr, b.bkpt_bin as bin, b.sample, loss_ll, gain_ll, no_bkpt_ll, b.label FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s' ORDER BY b.chr, b.bkpt_bin", 
                                       df$chr, df$.id, binL, binR, test.label))
 
-    if (nrow(bkpts) == 0) {
-        warning("bkpts returned 0 rows between bins ",binL,"..",binR)
-        return(data.frame(best=pos, best.bin=bin, conf.L=pos, conf.R=pos, pos=pos, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
-    }
+  if (nrow(bkpts) == 0) {
+    warning("bkpts returned 0 rows between bins ",binL,"..",binR)
+    return(nc(bin))
+  }
 
   bkpts <- mutate(bkpts,
                   loss=10^-loss_ll, 
@@ -236,8 +239,15 @@ res <-
       print(df) 
     }
     else {
-      posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
-      posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
+      if (grepl('START',df$label)) {
+        posterior.L <- nc(1)
+      } else {
+        posterior.L <- mk.posterior(df, posToBin(df$chr, df$start.map), df$dL)
+      }
+      posterior.L <- mutate(posterior.L, side='L')
+
+      posterior.R <- mutate(mk.posterior(df, posToBin(df$chr, df$end.map), df$dR), side='R')
+      
       return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
     }
   })
