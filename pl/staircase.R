@@ -17,6 +17,8 @@ library(plyr)
 library(dplyr)
 library(RPostgreSQL)
 
+DEBUG <- FALSE
+
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_27apr2017")
 # cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','csm','5','12','10','data_sfari_batch1C_27Apr2017')
@@ -89,6 +91,9 @@ message(Sys.time(),": leaving ",nrow(csm)," rows")
 message(Sys.time(),": Connecting to db.")
 db <- src_postgres()
 
+# retrieve them all into memory so it's easy to do a bin=>pos mapping
+profile.segments <- tbl(db, 'profile_segment') %>% collect(n=Inf)
+# load('/cygwin64/tmp/profile_segments.Rdata')
 
 # calculate the CI by growing greadily away from max. There are no NAs in p.
 conf.int <- function(p, conf=0.95) {
@@ -118,7 +123,7 @@ conf.int <- function(p, conf=0.95) {
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
   # df <- csm[csm$.id=='SSC00115',]
-  # df <- csm[csm$.id=='SSC03794',]
+  # df <- csm[csm$.id=='SSC02692',]
   sample <- df$.id[1]
   message(Sys.time(),": Computing MLE boundaries for ",sample)
   
@@ -140,7 +145,12 @@ csm.new <- ddply(csm, .(.id), function(df) {
       if (length(pos)==0) { warning(sprintf("Bin=>Pos mapping failed for %s. sample=%s, bin1=%s, bin2=%s", b, sample, bin1, bin2)) }
       pos
     }
-
+    
+    if (is.na(cnA)) {
+      return(data.frame(pos=binToPos(bin2), left.bound=NA, right.bound=NA, win.size=NA, left.tail=NA, right.tail=NA, best.bin=bin2, binL=NA, binR=NA, binCI.L=NA, binCI.R=NA))
+    } else if (is.na(cnB)) {
+      return(data.frame(pos=binToPos(bin1), left.bound=NA, right.bound=NA, win.size=NA, left.tail=NA, right.tail=NA, best.bin=bin1, binL=NA, binR=NA, binCI.L=NA, binCI.R=NA))
+    }
 
     cnA <- ifelse(cnA > 3, 4, cnA+1)  # map CN to index into pois.cn. CN > 3 => CN:=3
     cnB <- ifelse(cnB > 3, 4, cnB+1)
@@ -196,6 +206,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
       
       return(data.frame(pos=best.pos, left.bound=left.bound, right.bound=right.bound, win.size=posR-posL+1, left.tail=jp.norm[1], right.tail=jp.norm[length(jp.norm)], binL=binL, binR=binR, best.bin=best.bin, binCI.L=binCI.L, binCI.R=binCI.R))
     } else {
+      message(Sys.time(),": Failed (%s %s %s %s %s)", sample, bin1, bin2, cnA, cnB)
       best.bin <- bin1 + (bin2-bin1)%/%2 + 1
       best.pos <- binToPos(best.bin)
       return(data.frame(pos=best.pos, left.bound=NA, right.bound=NA, win.size=posR-posL+1, left.tail=NA, right.tail=NA, best.bin=best.bin, binL=binL, binR=binR, binCI.L=NA, binCI.R=NA))
@@ -208,110 +219,109 @@ csm.new <- ddply(csm, .(.id), function(df) {
   })
 
   # replace old values of start.map, end.map, start.bin, end.bin and add interval data.
-  # all these ifelse statements simply replace rows only where cn is not NA.
-  # If we worked in breakpoints instead of CNVs, then this would be simpler.
-  df$end.map <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$pos,NA))
-  df$end.map.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$left.bound,NA))
-  df$end.map.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.map, c(new.bounds$right.bound,NA))
-  df$end.map.win.size <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$win.size,NA))
-  df$end.map.L.tail <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$left.tail,NA))
-  df$end.map.R.tail <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$right.tail,NA))
-  df$end.bin.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binL,NA))
-  df$end.bin.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binR,NA))
-  df$end.bin <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), df$end.bin, c(new.bounds$best.bin,NA))
-  df$end.binCI.L <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.L,NA))
-  df$end.binCI.R <- ifelse(c(is.na(df$cn[1:nrow(df)-1]),TRUE), NA, c(new.bounds$binCI.R,NA))
+  nrm1 <- nrow(df)-1
+  df$end.map[1:nrm1] <- new.bounds$pos
+  df$end.map.L <- c(new.bounds$left.bound,NA)
+  df$end.map.R <- c(new.bounds$right.bound,NA)
+  df$end.map.win.size <- c(new.bounds$win.size,NA)
+  df$end.map.L.tail <- c(new.bounds$left.tail,NA)
+  df$end.map.R.tail <- c(new.bounds$right.tail,NA)
+  df$end.bin.L <- c(new.bounds$binL,NA)
+  df$end.bin.R <- c(new.bounds$binR,NA)
+  df$end.bin[1:nrm1] <- new.bounds$best.bin
+  df$end.binCI.L <- c(new.bounds$binCI.L,NA)
+  df$end.binCI.R <- c(new.bounds$binCI.R,NA)
   
-  df$start.map <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$pos))
-  df$start.map.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$left.bound))
-  df$start.map.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.map, c(NA, new.bounds$right.bound))
-  df$start.map.win.size <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$win.size))
-  df$start.map.L.tail <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$left.tail))
-  df$start.map.R.tail <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$right.tail))
-  df$start.bin.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binL))
-  df$start.bin.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binR))
-  df$start.bin <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), df$start.bin, c(NA, new.bounds$best.bin))
-  df$start.binCI.L <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.L))
-  df$start.binCI.R <- ifelse(c(TRUE,is.na(df$cn[2:nrow(df)])), NA, c(NA, new.bounds$binCI.R))
+  df$start.map[1:nrm1+1] <- new.bounds$pos
+  df$start.map.L <- c(NA,new.bounds$left.bound)
+  df$start.map.R <- c(NA,new.bounds$right.bound)
+  df$start.map.win.size <- c(NA,new.bounds$win.size)
+  df$start.map.L.tail <- c(NA,new.bounds$left.tail)
+  df$start.map.R.tail <- c(NA,new.bounds$right.tail)
+  df$start.bin.L <- c(NA,new.bounds$binL)
+  df$start.bin.R <- c(NA,new.bounds$binR)
+  df$start.bin[1:nrm1+1] <- new.bounds$best.bin
+  df$start.binCI.L <- c(NA,new.bounds$binCI.L)
+  df$start.binCI.R <- c(NA,new.bounds$binCI.R)
+  
+  # remove unneeded columns
+  df$start.i <- df$end.i <- NULL
+
+  # add an initial and final segment
+  this.chr <- first(df$chr)
+  profile.segments.chr <- filter(profile.segments, chrom==this.chr)
+  df <- rbind(tibble(.id=sample, cn=2, chr=first(df$chr), start.map=1, end.map=df$start.map[1],
+                     start.bin=1, end.bin=df$start.bin[1], copy.number=factor(2),
+                     label=sprintf("SEG_%s_%s_START",first(df$chr), sample), 
+                     len=df$start.map[1], len.bin=df$start.bin[1],
+                     end.map.L=NA, end.map.R=NA, end.map.win.size=NA, end.map.L.tail=NA, end.map.R.tail=NA,
+                     end.bin.L=NA, end.bin.R=NA, end.binCI.L=NA, end.binCI.R=NA,
+                     start.map.L=NA, start.map.R=NA, start.map.win.size=NA, 
+                     start.map.L.tail=NA, start.map.R.tail=NA, start.bin.L=NA, start.bin.R=NA,
+                     start.binCI.L=NA, start.binCI.R=NA),
+              df,
+              tibble(.id=sample, cn=2, chr=first(df$chr), start.map=df$end.map[nrow(df)], 
+                     end.map=max(profile.segments.chr$end_pos),
+                     start.bin=df$end.bin[nrow(df)], end.bin=max(profile.segments.chr$bin), 
+                     copy.number=factor(2),
+                     label=sprintf("SEG_%s_%s_END",first(df$chr), sample), 
+                     len=max(profile.segments.chr$end_pos)-df$end.map[nrow(df)], 
+                     len.bin=max(profile.segments.chr$bin)-df$end.bin[nrow(df)],
+                     end.map.L=NA, end.map.R=NA, end.map.win.size=NA, end.map.L.tail=NA, end.map.R.tail=NA,
+                     end.bin.L=NA, end.bin.R=NA, end.binCI.L=NA, end.binCI.R=NA,
+                     start.map.L=NA, start.map.R=NA, start.map.win.size=NA, 
+                     start.map.L.tail=NA, start.map.R.tail=NA, start.bin.L=NA, start.bin.R=NA,
+                     start.binCI.L=NA, start.binCI.R=NA))
 
   # It is possible that small CNVs have breakpoint bounds that have reversed order because the window scans beyond the size of the CNV.
   # Remove those CNVs.
-  if (any(df$end.bin < df$start.bin)) {
-    message(Sys.time(), ": Removing ",length(which(df$end.bin<df$start.bin)), " CNVs where adjusted end points eliminated a small CNV.")
-    df <- filter(df, end.bin >= start.bin)
-  }
-
-  # It is possible that end.bin < start.bin at this point because a small CNV is eliminated and the bounds overlap, e.g.
+  # For example:
   # Previously: 11111111111111333322222222222
   # Now:        11111111111111111111
+  #                              333
   #                              222222222222
+  #
+  # Change to:
+  #             11111111111111111NNN222222222
+  if (any(df$end.bin < df$start.bin)) {
+    reversed <- which(df$end.bin < df$start.bin)
+    message(Sys.time(), ": Removing ",length(reversed), " reversed CNVs and adjusting flanks.")
+    df[reversed-1,'end.map'] <- df[reversed,'end.map']
+    df[reversed+1,'start.map'] <- df[reversed,'start.map']
+    df[reversed,'start.map'] <- df[reversed-1,'end.map']
+    df[reversed,'end.map'] <- df[reversed+1,'start.map']
 
-  # For now, punt and resolve by just choosing the end position of the first segment and choosing the CI based on the left
-  #             11111111111111111111222222222
-  # Only do this for non-NAs
-  # FIXME: The fix should be to better factor ml.transition2 and apply it twice: once to all segments and a second time to just the overlapping ones.
-  # FIXME: We now may, again, have adjacent segments of the same CN, usually CN=2, which should be merged.
-
-  if (nrow(df) > 1) {
-    idx <- 1:(nrow(df)-1)
-
-    # row numbers of left CNV of conflicting breakpoints
-    trouble <- which(df$end.bin[idx] > df$start.bin[idx+1] & !is.na(df$cn[idx]) & !is.na(df$cn[idx+1]))
-
-    if (length(trouble)>0) {
-      message(Sys.time(), sprintf(": FIXME. %s has %s conflicting breakpoints (overlapping flanking CNVs) after MLE adjustments.", sample, length(trouble)))
-      if (any(df$cn[trouble]==df$cn[trouble+1])) {
-        message(Sys.time(), ": FIXME. And some of these conflicting breakpoints have the same CN and should be merged.")
-      }
-    }
-
-    # set start of right CNV to end of left CNV
-    df$start.map[trouble+1] <- df$end.map[trouble]
-    df$start.bin[trouble+1] <- df$end.bin[trouble]
-    df$start.map.L[trouble+1] <- df$end.map.L[trouble]
-    df$start.map.R[trouble+1] <- df$end.map.R[trouble]
-    df$start.map.win.size[trouble+1] <- df$end.map.win.size[trouble]
-    df$start.map.L.tail[trouble+1] <- df$end.map.L.tail[trouble]
-    df$start.map.R.tail[trouble+1] <- df$end.map.R.tail[trouble]
-    df$start.bin.L[trouble+1] <- df$end.bin.L[trouble]
-    df$start.bin.R[trouble+1] <- df$end.bin.R[trouble]
-    df$start.bin[trouble+1] <- df$end.bin[trouble]
-    df$start.binCI.L[trouble+1] <- df$end.binCI.L[trouble]
-    df$start.binCI.R[trouble+1] <- df$end.binCI.R[trouble]
+    df[reversed-1,'end.bin'] <- df[reversed,'end.bin']
+    df[reversed+1,'start.bin'] <- df[reversed,'start.bin']
+    df[reversed,'start.bin'] <- df[reversed-1,'end.bin']
+    df[reversed,'end.bin'] <- df[reversed+1,'start.bin']
+    
+    df[reversed,'cn'] <- NA
   }
 
-  df$cn.2 <- ifelse(is.na(df$cn), 2, df$cn)
-  df$dCN.R <- c(df$cn.2[2:nrow(df)]-df$cn.2[1:(nrow(df)-1)],2-df$cn.2[nrow(df)])
-  df$dCN.L <- c(2-df$cn.2[1], df$dCN.R[1:nrow(df)-1])
-  df$dL <- ifelse(df$dCN.L > 0, 'G', ifelse(df$dCN.L < 0, 'L', 'N'))
-  df$dR <- ifelse(df$dCN.R > 0, 'G', ifelse(df$dCN.R < 0, 'L', 'N'))
+  # It is possible that multiple CNVs start at the same breakpoint or end at the same breakpoint
+  # (There should be no overlaps since that should have been resolved in the previous step.)
+  # Set all such segments to CN=NA since it suggests an ambiguous site.
+  idx <- 1:(nrow(df)-1)
 
-  df$start.i <- NULL
-  df$end.i <- NULL
-  
-  # FIXME: AND! there are still conflicting segments where the same bp is chosen from different starting points.
-  #   22222222222223344888666333222222222
-  #   AAAAAAAAAAAAABBCCDDDEEEFFFGGGGGGGGG
-  # Results in:
-  #   22222222222223344888666333222222222
-  #                B
-  #                C
-  #                DD
-  # I think it's possible for new breakpoints to conflict and that overlapping
-  # is not predictable. So sort results to find overlaps and remove them.
-  # The CN=NA rows were not adjusted, so they may overlap, although not a problem.
-    df <- arrange(df, start.bin, end.bin)
-    df$ovlp <- c(df$end.bin[idx] > df$start.bin[idx+1] & !is.na(df$cn[idx]) & !is.na(df$cn[idx+1]),FALSE)
-  # Because the MLE is performed per breakpoint, it's possible that a 
-  # segment is length zero because a pair of breakpoints both optimized to the same position.
-  # If so, then segment is length 0. 
-    df$zlen <- df$end.bin - df$start.bin == 0
-    fail <- df$ovlp | df$zlen
-    if (any(fail)) {
-        message(Sys.time(), sprintf(": %s segments either overlapped or had zero length. Removing", sum(fail)))
-        df <- df[!fail,]
+  # row numbers of left CNV of conflicting breakpoints
+  trouble <- which(df$end.bin[idx] > df$start.bin[idx+1])
+
+  if (length(trouble)>0) {
+    trouble <- unique(c(trouble+1, trouble))
+    message(Sys.time(), sprintf(": Eliminating %s conflicting segments after MLE adjustments.", length(trouble)))
+
+    if (!all(df$start.bin[trouble]==df$start.bin[trouble+1] | df$end.bin[trouble]==df$end.bin[trouble+1])) {
+      message(Sys.time(), sprintf(": WARNING. Overlapping segments for %s that don't share common start or end point. Shouldn't happen."))
     }
 
+    df$cn[trouble] <- NA
+  }
+
+  df$dCN.R <- c(df$cn[2:nrow(df)]-df$cn[1:(nrow(df)-1)],0)
+  df$dCN.L <- c(0, df$dCN.R[1:nrow(df)-1])
+  df$dL <- ifelse(df$dCN.L > 0, 'G', ifelse(df$dCN.L < 0, 'L', 'N'))
+  df$dR <- ifelse(df$dCN.R > 0, 'G', ifelse(df$dCN.R < 0, 'L', 'N'))
 
   return(df)
 })
@@ -327,3 +337,4 @@ write.table(select(cn.segs.merged, .id, seg, chr, start.map.L, as.integer(start.
 write.table(cn.segs.merged[!is.na(cn.segs.merged$cn),c('chr','start.map','end.map','label','cn')], file=sprintf("%s.smlmrg.bed",cnv.seg.fn), sep="\t", col.names=FALSE, quote=FALSE, row.names=FALSE)
 
 rm(db)
+
