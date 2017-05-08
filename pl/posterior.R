@@ -20,8 +20,8 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_27apr2017")
-# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/11Apr2017/data_sfari_batch1D_11Apr2017b/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt smlcsm data_sfari_batch1D_11Apr2017b data_sfari_batch1D_11Apr2017b 0.7 10',' '))
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1b_27apr2017")
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1B_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm data_sfari_batch1B_27Apr2017 data_sfari_batch1B_27Apr2017 0.7 10',' '))
 # cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1C_27Apr2017','data_sfari_batch1C_27Apr2017','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
@@ -60,12 +60,11 @@ binToPos <- function(bin) {
 }
 
 # return a null-op / no change posterior
-nc <- function(bin) {
+nc <- function(bin,change) {
   return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
 }
 
-fetch.prior <- function(label, chr, pos, change) {
-  bin <- posToBin(chr, pos)
+fetch.prior <- function(label, chr, bin, change) {
   dbGetQuery(db$con, sprintf("SELECT p.*, pr.* FROM prior p, prior_region pr 
                              WHERE pr.label='%s' AND pr.chr='%s' AND pr.binL <= %s AND pr.binR >= %s AND p.region_id = pr.id AND pr.dcn ='%s'
                              ORDER BY pr.binL",
@@ -103,7 +102,7 @@ conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
 mk.posterior <- function(df, bin, change) {
   
   if (is.na(change) || change=='N') {
-    return(nc(bin))
+    return(nc(bin,change))
   }
   
                                         # load likelihoods for this sample
@@ -114,7 +113,7 @@ mk.posterior <- function(df, bin, change) {
 
   if (nrow(bkpts) == 0) {
     warning("bkpts returned 0 rows between bins ",binL,"..",binR)
-    return(nc(bin))
+    return(nc(bin,change))
   }
 
   bkpts <- mutate(bkpts,
@@ -139,11 +138,11 @@ mk.posterior <- function(df, bin, change) {
   
   
   # load prior that overlaps the initial breakpoint, if any, from external
-  prior.ext <- fetch.prior(external.label, df$chr, pos, change)
+  prior.ext <- fetch.prior(external.label, df$chr, bin, change)
   
   # load "prior" from test data 
   # TODO: compute prior on-the-fly, excluding current sample?
-  prior.int <- fetch.prior(test.label, df$chr, pos, change)
+  prior.int <- fetch.prior(test.label, df$chr, bin, change)
   
   if (nrow(prior.ext) == 0) {
     priors <- prior.int
@@ -238,9 +237,14 @@ res <-
       message(Sys.time(),": BUG: FIx Me. Should only be one row per label from staircase.R")
       print(df) 
     }
+    else if (df$end.bin==df$start.bin) {
+        message(Sys.time(), ": BUG: CNV is only one bin")
+        print(df)
+    }
     else {
-      if (grepl('START',df$label)) {
-        posterior.L <- nc(1)
+      # hack: the first segment has a bogus range starting at map position 1, which has no bin correspondence.
+      if (grepl(sprintf('SEG_%s_1_',df$chr), df$label)) {
+        posterior.L <- nc(1,df$dL)
       } else {
         posterior.L <- mk.posterior(df, posToBin(df$chr, df$start.map), df$dL)
       }
@@ -260,7 +264,7 @@ dbCommit(db$con)
 dbGetQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
-if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle") }
+if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle CASCADE") }
 dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
@@ -279,7 +283,7 @@ cn.segs.merged$copy.number <- addNA(as.factor(cn.segs.merged$cn))
 write.table(select(cn.segs.merged, .id, label, chr, start.CI.L, as.integer(start.map), start.CI.R, end.CI.L, as.integer(end.map), end.CI.R, copy.number), file=sprintf("%s.bayesCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
 # write new posterior version to db
-if (dbExistsTable(db$con, "cnv_post")) { invisible(dbGetQuery(db$con, "DROP TABLE cnv_post")) }
+if (dbExistsTable(db$con, "cnv_post")) { invisible(dbGetQuery(db$con, "DROP TABLE cnv_post CASCADE")) }
 dbWriteTable(db$con, "cnv_post", cn.segs.merged)
 invisible(dbGetQuery(db$con, "CREATE INDEX on cnv_post(chr, \"start.map\", \".id\")"))
 
