@@ -20,9 +20,9 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1b_27apr2017")
-# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1B_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm data_sfari_batch1B_27Apr2017 data_sfari_batch1B_27Apr2017 0.7 10',' '))
-# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1C_27Apr2017','data_sfari_batch1C_27Apr2017','.7', '10')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1d_27apr2017")
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1D_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm data_sfari_batch1D_27Apr2017 data_sfari_batch1D_27Apr2017 0.7 10',' '))
+# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1D_27Apr2017','data_sfari_batch1D_27Apr2017','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 test.label <- cmd.args[3]
@@ -73,7 +73,8 @@ fetch.prior <- function(label, chr, bin, change) {
 
 # calculate the CI by growing greadily away from max. 
 conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
-  p <- p / sum(p)  # make a density
+  if (any(is.na(p))) { message(Sys.time(),": Warning interval contains NA. Ignoring for now. FIX ME.") }
+  p <- p / sum(p, na.rm=TRUE)  # make a density
   best.pos <- which.max(p)
   i <- best.pos - 1
   j <- best.pos + 1
