@@ -38,17 +38,14 @@ POSTERIOR=${SCRIPTS}/posterior.R
 # input and output files
 SAMPLES=${workDir}/samples${SAMPLE_COUNT}.list
 SITES=${workDir}/sites${SITE_COUNT}.txt
-SITES_HIRES=${workDir}/sites${SITE_COUNT}_hires.txt
 
-CNV_SEG_SITES_FILE=${workDir}/sites_cnv_segs.txt
-CNV_SEG_SITES_FILE2=${workDir}/hires_sites_cnv_segs.txt
+export CNV_SEG_SITES_FILE=${workDir}/sites_cnv_segs.txt
 
 GS_DEL_FILE=${workDir}/gs_dels.txt # one row per sample site deletion
 GS_DEL_SITES_FILE=${workDir}/sites_gs_dels.txt
 
 # 1st and 2nd pass calls to profile genotyper
 OUT1_VCF=${workDir}/windows.vcf.gz
-OUT1_VCF_HIRES=${workDir}/windows.hires.vcf.gz
 IN2_SITES=${workDir}/sites_in2.txt
 OUT2_VCF=${workDir}/cnv_segs.vcf
 
@@ -99,6 +96,19 @@ fi
 # WRITES to csm, cnvgeno files and cnv_mrg and geno tables
 if [ ! -f ${CNV_SEG_SITES_FILE}.csm.Rdata ]; then
     time Rscript ${MERGE_CNV} ${OUT1_VCF}.txt ${CNV_CALL_THRESH} ${CNQ_THRESH} ${SPAN_THRESH} ${CNV_SEG_SITES_FILE} 1>&2
+
+    # One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
+    if [ ! -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz ]; then
+	echo -n `date +"%F %T"` Creating genotype tabix
+	sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
+	rm ${CNV_SEG_SITES_FILE}.cnvgeno.txt
+	bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
+#	tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
+	echo `date +"%F %T"` Loading genotypes to database
+	sql loadGeno.sql
+    fi
+
+
 fi
 
 # generate poisson probs
@@ -129,13 +139,6 @@ fi
 # WRITES bayescsm file and cnv_mle, cnv_post tables
 if [ ! -f ${CNV_SEG_SITES_FILE}.bayescsm.Rdata ]; then
     time Rscript ${POSTERIOR} ${CNV_SEG_SITES_FILE} smlcsm ${INT_LABEL} ${EXT_LABEL} ${PRIOR_BLEND} ${MLE_WINSIZE}
-fi
-
-# One of the outputs is exploded genotype calls (one row per sample). Create a tabix index for use in viz
-if [ ! -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz ]; then
-    sort -k2n,3n ${CNV_SEG_SITES_FILE}.cnvgeno.txt > ${CNV_SEG_SITES_FILE}.cnvgeno.srt
-    bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
-    tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 fi
 
 # create a row per sample deletion for input into R
