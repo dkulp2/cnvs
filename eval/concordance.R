@@ -103,23 +103,18 @@ family.sample <-
 # load the "cn.segs.merged" table and add CN=2 for all gaps
 load.cnvs <- function(d) { 
   load(sprintf("%s/%s/%s", basedir, d, cnv.fn))
-  if (any(cn.segs.merged$end.map <= cn.segs.merged$start.map)) {
-    cat("FIXME: Removing bogus predictions where END < START.\n")
-    cn.segs.merged <- filter(cn.segs.merged, end.map > start.map)
-  }
+  
   new.cnvs <- 
     ddply(cn.segs.merged, .(.id, chr), function(df) {
       sample.id <- first(df$.id)
       chr <- first(df$chr)
       cat(sample.id,"\n")
-      if (USE_BINS) {
-        df <- arrange(filter(df, end.bin-start.bin > MIN.CNV.LEN), start.map)
-      } else {
-        df <- arrange(filter(df, end.map-start.map > MIN.CNV.LEN*100), start.map)
-      }
+      df <- arrange(df, start.map)
+
       if (nrow(df)<=1) {
         between <- data.frame()
       } else {
+        
         row.range <- 2:nrow(df)
         gap.pre <- which(df$start.map[row.range] > df$end.map[row.range-1])+1
         if (length(gap.pre)>0) {
@@ -129,13 +124,51 @@ load.cnvs <- function(d) {
                                 start.CI.L=lbound, start.map=lbound, start.CI.R=lbound,
                                 end.CI.L=rbound, end.map=rbound, end.CI.R=rbound, cn=2)
         } else { between <- data.frame() }
+      }
+      
+      df <-
+        if (nrow(df) > 0) {
+          arrange(rbind(data.frame(label=paste0(sample.id,'_START'),
+                                   start.CI.L=1, start.map=1, start.CI.R=1,
+                                   end.CI.L=df$start.map[1], end.map=df$start.map[1], end.CI.R=df$start.map[1], cn=2),
+                        between,
+                        select(subset(df,select=-c(.id, chr)), label, start.CI.L, start.map, start.CI.R, end.CI.L, end.map, end.CI.R, cn),
+                        data.frame(label=paste0(sample.id,'_END'),
+                                   start.CI.L=df$end.map[nrow(df)], start.map=df$end.map[nrow(df)], start.CI.R=df$end.map[nrow(df)],
+                                   end.CI.L=chrom.max(df$chr[1]), end.map=chrom.max(df$chr[1]), end.CI.R=chrom.max(df$chr[1]), cn=2)), start.map)
+        } else {
+          data.frame(label=paste0(sample.id,'_START_END'),
+                     start.CI.L=1, start.map=1, start.CI.R=1,
+                     end.CI.L=chrom.max(chr), end.map=chrom.max(chr), end.CI.R=chrom.max(chr), cn=2)
+        }
+
+      if (any(df$end.map <= df$start.map)) {
+        reversed <- which(df$end.map <= df$start.map)
         
+        cat(sprintf("FIXME: Invalidating %s bogus predictions where END < START and adjusting flanking segments in %s.\n",length(reversed),sample.id))
+        
+        # A reversal of B in A-B-C results in A and C overlapping.
+        # Set A's end to B's end. Set C's start to B's start. Swap B and set CN=NA
+        df[reversed-1,'end.map'] <- df[reversed,'end.map']
+        df[reversed+1,'start.map'] <- df[reversed,'start.map']
+        df[reversed,'start.map'] <- df[reversed-1,'end.map']
+        df[reversed,'end.map'] <- df[reversed+1,'start.map']
+        
+        if (USE_BINS) {
+          df[reversed-1,'end.bin'] <- df[reversed,'end.bin']
+          df[reversed+1,'start.bin'] <- df[reversed,'start.bin']
+          df[reversed,'start.bin'] <- df[reversed-1,'end.bin']
+          df[reversed,'end.bin'] <- df[reversed+1,'start.bin']
+        }
+        
+        df[reversed,'cn'] <- NA
+      }
+      
         ovlps <- which(df$start.map[row.range] < df$end.map[row.range-1])+1
         if (length(ovlps) > 0) {
-          cat(sprintf("FIXME: Removing %s overlapping predictions in %s\n", length(ovlps), first(df$.id)))
-          print(df[ovlps,])
-          df <- df[-ovlps,]
-          row.range <- 2:nrow(df)
+          cat(sprintf("FIXME: Invalidating %s overlapping predictions in %s\n", length(ovlps), first(df$.id)))
+          df[ovlps,'cn'] <- NA
+          df[ovlps-1,'cn'] <- NA
         }
         
         
@@ -156,20 +189,14 @@ load.cnvs <- function(d) {
         }
       }
       
-      if (nrow(df) > 0) {
-        rbind(data.frame(label=paste0(sample.id,'_START'),
-                         start.CI.L=1, start.map=1, start.CI.R=1,
-                         end.CI.L=df$start.map[1], end.map=df$start.map[1], end.CI.R=df$start.map[1], cn=2),
-              between,
-              select(subset(df,select=-c(.id, chr)), label, start.CI.L, start.map, start.CI.R, end.CI.L, end.map, end.CI.R, cn),
-              data.frame(label=paste0(sample.id,'_END'),
-                         start.CI.L=df$end.map[nrow(df)], start.map=df$end.map[nrow(df)], start.CI.R=df$end.map[nrow(df)],
-                         end.CI.L=chrom.max(df$chr[1]), end.map=chrom.max(df$chr[1]), end.CI.R=chrom.max(df$chr[1]), cn=2))
+      # Mark small CNVs as NA
+      if (USE_BINS) {
+        too.short <- which(df$end.bin-df$start.bin < MIN.CNV.LEN)
       } else {
-        data.frame(label=paste0(sample.id,'_START_END'),
-                   start.CI.L=1, start.map=1, start.CI.R=1,
-                   end.CI.L=chrom.max(chr), end.map=chrom.max(chr), end.CI.R=chrom.max(chr), cn=2)
+        too.short <- which(df$end.map-df$start.map < MIN.CNV.LEN)
       }
+      df[too.short,'cn'] <- NA
+      
     })
   return(arrange(new.cnvs, .id, chr, start.map))
 }
@@ -254,6 +281,7 @@ close(t1.conn)
 segs <- read.csv(t1.fn, as.is=TRUE, check.names=FALSE, header=FALSE)
 colnames(segs) <- c('family','sib1','sib2','mother','father','chr','start','end','sib1.cn','sib2.cn','par1.cn','par2.cn','ibd.state')
 
+segs$cn.na <- is.na(segs$sib1.cn) | is.na(segs$sib2.cn) | is.na(segs$par1.cn) | is.na(segs$par2.cn)
 segs$sib.eq <- (segs$sib1.cn == segs$sib2.cn)
 segs$all.eq <- (segs$sib.eq & segs$sib1.cn==segs$par1.cn & segs$sib1.cn==segs$par2.cn)
 segs$sib.del <- segs$sib1.cn < 2 | segs$sib2.cn < 2
@@ -335,7 +363,7 @@ segs$sib.sum.less.p.div2.ge0 <- segs$sib.sum.less.p / 2 >= 0
 segs$sib.sum.less.p.div2.lem <- segs$sib.sum.less.p / 2 <= segs$par1.cn
 segs$ibd1m.conc <- segs$sib.sum.less.p.even & segs$sib.sum.less.p.div2.ge0 & segs$sib.sum.less.p.div2.lem
 
-segs$concordant <- ifelse(segs$ibd.state=='IBD0', segs$sums.eq, ifelse(segs$ibd.state=='IBD2', segs$sib.eq, ifelse(segs$ibd.state=='IBD1P', segs$ibd1p.conc, segs$ibd1m.conc)))
+segs$concordant <- segs$cn.na | ifelse(segs$ibd.state=='IBD0', segs$sums.eq, ifelse(segs$ibd.state=='IBD2', segs$sib.eq, ifelse(segs$ibd.state=='IBD1P', segs$ibd1p.conc, segs$ibd1m.conc)))
 
 segs$cnv <- ifelse(segs$is.del, 'DEL', ifelse(segs$bi.all, 'BI', ifelse(segs$all.wt, 'WT', 'MULTI')))
 #segs$cnv <- ifelse(segs$sib.del, 'DEL', ifelse(segs$all.wt, 'WT', 'OTHER')) # OLD DEFN
@@ -407,7 +435,7 @@ mk.segs.group <- function(group.sz) {
           max.start <- max(rows$starts)
           match.min.end <- rows$ends==min.end
           
-          if (min.end - pos > big2 & all(rows$cn2)) {
+          if (!is.na(all(rows$cn2)) & min.end - pos > big2 & all(rows$cn2)) {
             # push the row indices for all samples
             all.cn2[[length(all.cn2)+1]] <- fam.row
             
@@ -462,10 +490,11 @@ sapply(segs.group, function(df) {
 })
 dev.off()
 
-sa1 <- filter(segs.all[[1]], !is.na(ibd.state) & cnv=='DEL')
+sa1 <- filter(segs.all[[1]], !is.na(ibd.state) & cnv=='DEL' & !cn.na)
 print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
         geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)))
 
+# xlm <- xlim(0.6295e7,.6303e7)
 # print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
 #         geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)) + xlm)
 
