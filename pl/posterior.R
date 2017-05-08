@@ -20,10 +20,9 @@ library(RPostgreSQL)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1D_11Apr2017b")
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_27apr2017")
 # cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/11Apr2017/data_sfari_batch1D_11Apr2017b/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt smlcsm data_sfari_batch1D_11Apr2017b data_sfari_batch1D_11Apr2017b 0.7 10',' '))
-# cmd.args <- c('/home/unix/dkulp/data/out/1Apr2017_binspace/data_sfari_batch1B_1Apr2017_binspaceb/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt','smlcsm','data_sfari_batch1B_1Apr2017_binspaceb','data_sfari_batch1B_1Apr2017_binspaceb','0.7','10')
-# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.4/sites_cnv_segs.txt','smlcsm','gpc_wave2_batch1','gpc_wave2_batch1','.7', '10')
+# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1C_27Apr2017','data_sfari_batch1C_27Apr2017','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 test.label <- cmd.args[3]
@@ -43,6 +42,8 @@ invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 
 # retrieve them all into memory so it's easy to do a bin=>pos mapping
 profile.segments <- tbl(db, 'profile_segment') %>% collect(n=Inf)
+# save(profile.segments, file="/cygwin64/tmp/profile_segments.Rdata")
+# load("/tmp/profile_segments.Rdata")
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
@@ -212,7 +213,7 @@ mk.posterior <- function(df, pos, change) {
   pe.id <- ifelse(is.null(prior.ext$id), NA_integer_, first(prior.ext$id))
 
   # if priors used, then augment with prior IDs
-  return(mutate(metric.res, bin=pos, change=change, 
+  return(mutate(metric.res, bin=bin, change=change, 
                 prior.int.id=pi.id,
                 prior.ext.id=pe.id))
   
