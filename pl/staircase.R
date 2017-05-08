@@ -117,14 +117,12 @@ conf.int <- function(p, conf=0.95) {
 # for each sample, load all profile data, for each transition compute MLE boundary and confidence intervals
 # as a side effect, also write the probability of the data over all possible transitions
 csm.new <- ddply(csm, .(.id), function(df) {
-  # df <- csm[csm$.id=='SSC02692',]
-  # df <- csm[csm$.id=='SSC00005',]
+  # df <- csm[csm$.id=='SSC00115',]
+  # df <- csm[csm$.id=='SSC03794',]
   sample <- df$.id[1]
   message(Sys.time(),": Computing MLE boundaries for ",sample)
   
   pois.cn.df <- dbGetQuery(db$con, sprintf("SELECT ps.chrom, ps.start_pos, ps.end_pos, pois.* FROM pois, profile_segment ps WHERE pois.label='%s' AND pois.sample='%s' AND pois.bin=ps.bin AND pois.chr=ps.chrom ORDER BY ps.chrom, ps.start_pos", data.label, sample))
-  # save(pois.cn.df, file='/cygwin64/tmp/pois_cn_df.SSC02692.Rdata')
-  # load('/cygwin64/tmp/pois_cn_df.SSC02692.Rdata')
 
   stopifnot(win.size.bins %% 2 == 0) # must be even number of bins
   half.win <- win.size.bins / 2 # each window is divided into 2 equal sides for cnA and cnB
@@ -137,7 +135,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
 
     binToPos <- function(b, side='start_pos') {
       pos <- filter(pois.cn.df, bin==b)[[side]]
-      if (length(pos)==0) { warning(sprintf("Bin=>Pos mapping failed for %s. sample=%s, bin1=%s, bin2=%s", b, sample, bin1, bin2)) }
+      if (length(pos)==0) { warning("Bin=>Pos mapping failed for %s. sample=%s, bin1=%s, bin2=%s", b, sample, bin1, bin2) }
       pos
     }
 
@@ -160,7 +158,6 @@ csm.new <- ddply(csm, .(.id), function(df) {
     jp <- pA * pB    # joint likelihood
     jp.norm <- jp / sum(jp)  # normalized
     best.jp.bin <- which.max(jp.norm)
-    
 
     #    cat(sprintf("%s:%.0f/%.0f => %.0f (%.4f..%.4f)\n", sample, pos1, pos2, best.pos, min(-log(jp.norm)), max(-log(jp.norm))))
     if (length(best.jp.bin)>0) { # Either cnA or cnB is NA if length is zero
@@ -170,26 +167,6 @@ csm.new <- ddply(csm, .(.id), function(df) {
       CI <- conf.int(jp.norm)  # returns CI$left and CI$right, which are bin offsets of best.pos
       binCI.L <- best.bin + CI$left
       binCI.R <- best.bin + CI$right
-      
-      # debug plots
-      if (DEBUG) {
-        wR <- (pois.idx.start-10):(pois.idx.start+bin.count+10-win.size.bins)
-        LA <- pois.cnL[[cnA]][wR]
-        RB <- pois.cnR[[cnB]][wR]
-        AB <- LA*RB
-        WB <- pois.cn.df$bin[wR]+half.win
-        gp <- rbind(data.frame(bin=WB, p=LA, var=as.character(cnA-1),part='A'),
-                    data.frame(bin=WB, p=RB, var=as.character(cnB-1),part='A'),
-                    data.frame(bin=WB, p=AB, var='AB',part='B'))
-        b <- data.frame(x=c(best.bin,binL,binR, binL+half.win, binR-half.win, bin1, bin2), 
-                        var=c('best','bounds','bounds','midbounds','midbounds','starts','starts'),
-                        part=c('B','A','A','A','A','A','A'))
-        maxp <- max(AB)
-        print(ggplot(gp, aes(x=bin, y=p, color=var)) + geom_point() + 
-                facet_grid(part~., scales="free_y") + 
-                geom_vline(aes(xintercept=x, color=var), data=b) + 
-                geom_segment(x=binCI.L,xend=binCI.R,y=maxp,yend=maxp))
-      }
       
       # bounds are generous, including the furthest base from the best.pos in the transition bins.
       left.bound <- binToPos(binCI.L)
@@ -204,11 +181,9 @@ csm.new <- ddply(csm, .(.id), function(df) {
   }
   
   # Iterate across every boundary, where the boundary between the first and second segment is idx=1, etc.
-  #pdf("MLE.pdf")
   new.bounds <- ldply(1:(nrow(df)-1), function(idx) { 
     ml.transition2(sample, df$end.bin[idx], df$start.bin[idx+1], df$cn[idx], df$cn[idx+1]) 
   })
-  # dev.off()
 
   # replace old values of start.map, end.map, start.bin, end.bin and add interval data.
   # all these ifelse statements simply replace rows only where cn is not NA.
