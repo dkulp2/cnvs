@@ -99,7 +99,7 @@ mk.posterior <- function(df, pos, change) {
   
   bin <- posToBin(df$chr, pos)
 
-  if (is.na(df$change) || change=='N') {
+  if (is.na(change) || change=='N') {
     return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
   }
   
