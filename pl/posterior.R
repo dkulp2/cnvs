@@ -99,7 +99,7 @@ mk.posterior <- function(df, pos, change) {
   
   bin <- posToBin(df$chr, pos)
 
-  if (change=='N') {
+  if (is.na(df$change) || change=='N') {
     return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
   }
   
@@ -227,24 +227,20 @@ if (dbExistsTable(db$con, "posterior_dist")) {
 }
 
 # for each predicted CNV, compute a new normalized density for each breakpoint based on the joint probability of the likelihood and prior.
-#pv <- profvis({
-  res <-
-    ddply(filter(cnvs, cn!=2), .(label), function(df) {
-        cat(df$label,"\n")
-        label.pieces <- unlist(strsplit(df$label, '_'))
-        if (label.pieces[3] == label.pieces[4]) {
-            print("FIXME: Empty region")
-        } else if (nrow(df) > 1) {
-            print("BUG: FIx Me. Should only be one row per label from staircase.R")
-            print(df) 
-        }
-        else {
-            posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
-            posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
-            return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
-        }
-    })
-#})
+message(Sys.time(),sprintf(": Estimating maximum aposterior breakpoint for %s cnvs", nrow(cnvs)))
+res <-
+  ddply(cnvs, .(label), function(df) {
+    cat(df$label,"\n")
+    if (nrow(df) > 1) {
+      message(Sys.time(),": BUG: FIx Me. Should only be one row per label from staircase.R")
+      print(df) 
+    }
+    else {
+      posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
+      posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
+      return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
+    }
+  })
 
 dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','bin','change','prior.int.id','prior.ext.id','side','.id','chr','label')], 
                                          seg=label, label=test.label), append=TRUE, row.names = FALSE)
