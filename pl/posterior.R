@@ -33,6 +33,7 @@ PAD <- as.numeric(cmd.args[6])
 # predicted CNVs
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 cnvs <- as.tbl(cn.segs.merged)
+cnvs$idx <- 1:nrow(cnvs)
 
 # connect to DB
 db <- src_postgres()
@@ -253,11 +254,11 @@ res <-
 
       posterior.R <- mutate(mk.posterior(df, posToBin(df$chr, df$end.map), df$dR), side='R')
       
-      return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
+      return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label, idx=df$idx)))
     }
   })
 
-dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','bin','change','prior.int.id','prior.ext.id','side','.id','chr','label')], 
+dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','bin','change','prior.int.id','prior.ext.id','side','.id','chr','label','idx')], 
                                          seg=label, label=test.label), append=TRUE, row.names = FALSE)
 
 
@@ -266,10 +267,10 @@ dbGetQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
 if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle CASCADE") }
-dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R")]))
+dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R","idx")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
-cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
+cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn, c.idx FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\' ORDER by c.idx', test.label, test.label))
 
 # convert all coordinates to genomic for compatibility with other "cn.segs.merged" tables
 cn.segs.merged <- mutate(cnvs.post,
