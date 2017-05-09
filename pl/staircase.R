@@ -304,19 +304,22 @@ csm.new <- ddply(csm, .(.id), function(df) {
   # Set all such segments to CN=NA since it suggests an ambiguous site.
   idx <- 1:(nrow(df)-1)
 
-  # row numbers of left CNV of conflicting breakpoints
-  trouble <- which(df$end.bin[idx] > df$start.bin[idx+1])
+  # Check that all adjacent segments are consistent
+  stopifnot(all(df$end.bin[idx] == df$start.bin[idx+1]))
 
-  if (length(trouble)>0) {
-    trouble <- unique(c(trouble+1, trouble))
-    message(Sys.time(), sprintf(": Eliminating %s conflicting segments after MLE adjustments.", length(trouble)))
+  ## # row numbers of left CNV of conflicting breakpoints
+  ## trouble <- which(df$end.bin[idx] > df$start.bin[idx+1])
 
-    if (!all(df$start.bin[trouble]==df$start.bin[trouble+1] | df$end.bin[trouble]==df$end.bin[trouble+1])) {
-      message(Sys.time(), sprintf(": WARNING. Overlapping segments for %s that don't share common start or end point. Shouldn't happen."))
-    }
+  ## if (length(trouble)>0) {
+  ##   trouble <- unique(c(trouble+1, trouble))
+  ##   message(Sys.time(), sprintf(": Eliminating %s conflicting segments after MLE adjustments.", length(trouble)))
 
-    df$cn[trouble] <- NA
-  }
+  ##   if (!all(df$start.bin[trouble]==df$start.bin[trouble+1] | df$end.bin[trouble]==df$end.bin[trouble+1])) {
+  ##     message(Sys.time(), sprintf(": WARNING. Overlapping segments for %s that don't share common start or end point. Shouldn't happen."))
+  ##   }
+
+  ##   df$cn[trouble] <- NA
+  ## }
 
   df$dCN.R <- c(df$cn[2:nrow(df)]-df$cn[1:(nrow(df)-1)],0)
   df$dCN.L <- c(0, df$dCN.R[1:nrow(df)-1])
