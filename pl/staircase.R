@@ -250,20 +250,11 @@ csm.new <- ddply(csm, .(.id), function(df) {
   # add an initial and final segment
   this.chr <- first(df$chr)
   profile.segments.chr <- filter(profile.segments, chrom==this.chr)
-  df <- rbind(tibble(.id=sample, cn=2, chr=first(df$chr), start.map=1, end.map=df$start.map[1],
-                     start.bin=1, end.bin=df$start.bin[1], copy.number=factor(2),
-                     label=sprintf("SEG_%s_%s_START",first(df$chr), sample), 
-                     len=df$start.map[1], len.bin=df$start.bin[1],
-                     end.map.L=NA, end.map.R=NA, end.map.win.size=NA, end.map.L.tail=NA, end.map.R.tail=NA,
-                     end.bin.L=NA, end.bin.R=NA, end.binCI.L=NA, end.binCI.R=NA,
-                     start.map.L=NA, start.map.R=NA, start.map.win.size=NA, 
-                     start.map.L.tail=NA, start.map.R.tail=NA, start.bin.L=NA, start.bin.R=NA,
-                     start.binCI.L=NA, start.binCI.R=NA),
-              df,
-              tibble(.id=sample, cn=2, chr=first(df$chr), start.map=df$end.map[nrow(df)], 
+  df <- rbind(df,
+              tibble(.id=sample, cn=NA, chr=first(df$chr), start.map=df$end.map[nrow(df)], 
                      end.map=max(profile.segments.chr$end_pos),
                      start.bin=df$end.bin[nrow(df)], end.bin=max(profile.segments.chr$bin), 
-                     copy.number=factor(2),
+                     copy.number=NA,
                      label=sprintf("SEG_%s_%s_END",first(df$chr), sample), 
                      len=max(profile.segments.chr$end_pos)-df$end.map[nrow(df)], 
                      len.bin=max(profile.segments.chr$bin)-df$end.bin[nrow(df)],
@@ -317,6 +308,10 @@ csm.new <- ddply(csm, .(.id), function(df) {
 
     df$cn[trouble] <- NA
   }
+  
+  # it's possible that a segment collapses into a single bin. If so, just eliminate it.
+  zlen <- which(df$start.bin==df$end.bin)
+  df <- df[-zlen]
 
   df$dCN.R <- c(df$cn[2:nrow(df)]-df$cn[1:(nrow(df)-1)],0)
   df$dCN.L <- c(0, df$dCN.R[1:nrow(df)-1])
