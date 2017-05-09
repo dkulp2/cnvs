@@ -4,9 +4,10 @@ rm data_sfari_batch1[ABCD]*/*/*smlcsm*
 # collapse
 rm data_sfari_batch1[ABCD]*/*/*smlx2csm*
 
-# priors - SET ENVIRONMENT!!
+# priors and posterior tables - SET ENVIRONMENT!!
 for i in data_sfari_batch1[ABCD]*; do
-  psql -a -c "drop table ${i}.prior cascade; drop table ${i}.prior_region cascade"
+    psql -c "drop table ${i}.prior cascade; drop table ${i}.prior_region cascade"
+    psql -c "drop table ${i}.posterior cascade; drop table ${i}.posterior_dist cascade;"
 done
 
 # posterior
