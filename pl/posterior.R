@@ -239,18 +239,8 @@ res <-
       message(Sys.time(),": BUG: FIx Me. Should only be one row per label from staircase.R")
       print(df) 
     }
-    else if (df$end.bin==df$start.bin) {
-        message(Sys.time(), ": BUG: CNV is only one bin")
-        print(df)
-    }
     else {
-      # hack: the first segment has a bogus range starting at map position 1, which has no bin correspondence.
-      if (grepl(sprintf('SEG_%s_1_',df$chr), df$label)) {
-        posterior.L <- nc(1,df$dL)
-      } else {
-        posterior.L <- mk.posterior(df, posToBin(df$chr, df$start.map), df$dL)
-      }
-      posterior.L <- mutate(posterior.L, side='L')
+      posterior.L <- mutate(mk.posterior(df, posToBin(df$chr, df$start.map), df$dL), side='L')
 
       posterior.R <- mutate(mk.posterior(df, posToBin(df$chr, df$end.map), df$dR), side='R')
       
