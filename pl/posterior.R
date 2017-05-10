@@ -22,6 +22,7 @@ library(reshape)
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1d_27apr2017")
 # cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1D_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm data_sfari_batch1D_27Apr2017 data_sfari_batch1D_27Apr2017 0.7 10',' '))
+# cmd.args <- unlist(strsplit('/cygwin64/home/dkulp/data/SFARI.27April2017mod/dataD/sites_cnv_segs.txt smlcsm data_sfari_batch1D_27Apr2017 data_sfari_batch1D_27Apr2017 0.7 10',' '))
 # cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1D_27Apr2017','data_sfari_batch1D_27Apr2017','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
@@ -37,6 +38,8 @@ cnvs$idx <- 1:nrow(cnvs)
 
 # connect to DB
 db <- src_postgres()
+prior.region <- tbl(db,'prior_region')
+prior <- tbl(db,'prior')
 
 invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 
@@ -44,7 +47,7 @@ invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 # retrieve them all into memory so it's easy to do a bin=>pos mapping
 profile.segments <- tbl(db, 'profile_segment') %>% collect(n=Inf)
 # save(profile.segments, file="/cygwin64/tmp/profile_segments.Rdata")
-# load("/tmp/profile_segments.Rdata")
+# load("/cygwin64/tmp/profile_segments.Rdata")
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
@@ -66,10 +69,24 @@ nc <- function(bin,change) {
 }
 
 fetch.prior <- function(label, chr, bin, change) {
-  dbGetQuery(db$con, sprintf("SELECT p.*, pr.* FROM prior p, prior_region pr 
-                             WHERE pr.label='%s' AND pr.chr='%s' AND pr.binL <= %s AND pr.binR >= %s AND p.region_id = pr.id AND pr.dcn ='%s'
-                             ORDER BY pr.binL",
-                             label, chr, bin, bin, change))
+  # there may be multiple loss (gain) priors that overlap our bin. Choose only one that best straddles the bin
+  pr <- filter(prior.region, label==label & chr==chr & binl <= bin & binr >= bin & change==change) %>% collect
+  if (nrow(pr) == 0) {
+    message(Sys.time(),sprintf(": Warning. No prior at (%s,%s,%s,%s)", label,chr,bin,change))
+    return(data.frame())
+  } 
+  
+  if (nrow(pr)>1) {
+    message(Sys.time(),sprintf(": Notice. Multiple priors at (%s,%s,%s,%s)", label,chr,bin,change))
+  }
+  
+  pr$dist <- pmin(bin-pr$binl,pr$binr-bin)
+  pr.best <- which.max(pr$dist)
+  pr.id <- pr$id[pr.best]
+  pr.n <- pr$n[pr.best]
+  pr.total <- pr$total[pr.best]
+
+  filter(prior, region_id==pr.id) %>% arrange(bin) %>% collect %>% mutate(n=pr.n, total=pr.total)
 }
 
 # calculate the CI by growing greadily away from max. 
@@ -224,10 +241,12 @@ mk.posterior <- function(df, bin, change) {
 }
 
 if (dbExistsTable(db$con, "posterior")) {
-  invisible(dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label))
+#  invisible(dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label))
+  invisible(dbGetQuery(db$con, "DROP TABLE posterior"))
 }
 if (dbExistsTable(db$con, "posterior_dist")) {
-  invisible(dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label))
+#  invisible(dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label))
+  invisible(dbGetQuery(db$con, "DROP TABLE posterior_dist"))
 }
 
 # for each predicted CNV, compute a new normalized density for each breakpoint based on the joint probability of the likelihood and prior.
