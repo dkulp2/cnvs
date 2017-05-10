@@ -229,13 +229,13 @@ ddply(quartets, .(family), function(fam) {
       while (!is.na(pos) && pos < max(ibd.fam.chr$END)) {
         next.pos <- min(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], 
                         par1$end.map[par1.idx], par2$end.map[par2.idx], na.rm=TRUE)
-        print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], par1$end.map[par1.idx], par2$end.map[par2.idx]))
+        #print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], par1$end.map[par1.idx], par2$end.map[par2.idx]))
         if (next.pos <= pos) { 
           print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], 
                   par1$end.map[par1.idx], par2$end.map[par2.idx]))
         }
 
-        print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
+        #print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
         if (!is.na(next.pos)) {
           cat(paste0(paste(fam$family, fam$sib1, fam$sib2, fam$mother, fam$father, chr, pos, next.pos, sib1$cn[sib1.idx], sib2$cn[sib2.idx], par1$cn[par1.idx], par2$cn[par2.idx],
                            ibd.code(ibd.fam.chr[ibd.idx,]), sep=','),"\n"), file=t1.conn)
@@ -247,8 +247,8 @@ ddply(quartets, .(family), function(fam) {
           if (par2.idx <= nrow(par2) && next.pos >= par2$end.map[par2.idx]) { par2.idx <- par2.idx + 1 }
         }        
 
-        print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
-        print(c(pos,next.pos))
+        #print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
+        #print(c(pos,next.pos))
         pos <- next.pos
       }
     } else {
@@ -346,7 +346,7 @@ segs$sib.sum.less.p.div2.ge0 <- segs$sib.sum.less.p / 2 >= 0
 segs$sib.sum.less.p.div2.lem <- segs$sib.sum.less.p / 2 <= segs$par1.cn
 segs$ibd1m.conc <- segs$sib.sum.less.p.even & segs$sib.sum.less.p.div2.ge0 & segs$sib.sum.less.p.div2.lem
 
-segs$concordant <- segs$cn.na | ifelse(segs$ibd.state=='IBD0', segs$sums.eq, ifelse(segs$ibd.state=='IBD2', segs$sib.eq, ifelse(segs$ibd.state=='IBD1P', segs$ibd1p.conc, segs$ibd1m.conc)))
+segs$concordant <- ifelse(segs$ibd.state=='IBD0', segs$sums.eq, ifelse(segs$ibd.state=='IBD2', segs$sib.eq, ifelse(segs$ibd.state=='IBD1P', segs$ibd1p.conc, segs$ibd1m.conc)))
 
 segs$cnv <- ifelse(segs$is.del, 'DEL', ifelse(segs$bi.all, 'BI', ifelse(segs$all.wt, 'WT', 'MULTI')))
 #segs$cnv <- ifelse(segs$sib.del, 'DEL', ifelse(segs$all.wt, 'WT', 'OTHER')) # OLD DEFN
@@ -477,6 +477,10 @@ sa1 <- filter(segs.all[[1]], !is.na(ibd.state) & cnv=='DEL' & !cn.na)
 print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
         geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)))
 
+sa2 <- filter(segs.all[[1]], !is.na(ibd.state))
+print(ggplot(filter(sa2, len>MIN.OVLP.LEN), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
+        geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",MIN.OVLP.LEN)))
+
 # xlm <- xlim(0.6295e7,.6303e7)
 # xlm <- xlim(6.0517e7,6.0525e7)
 # print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
@@ -586,7 +590,7 @@ rocs <- llply(bad.loci, function(ab) {
 rocs[['All']] <- mutate(cts(segs),grp="All")
 rocs.hold1 <- do.call(rbind, rocs)
 rocs.hold1$all <- rocs.hold1$grp=='All'
-ggplot(filter(rocs.hold1, cnv %in% c('DEL')), 
+ggplot(filter(rocs.hold1, cnv %in% c('DEL') & all), 
              aes(x=len.min, y=conc.cnv.pct, color=grp, size=all))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) + guides(size="none")
 
 # generate AUC for each of the "hold one out" ROCs
@@ -628,13 +632,17 @@ rocs2 <- ldply(1:length(excl.label), function(i) {
   mutate(cts(segs.ex[[i]]),grp=excl.label[i])
 })
 
-p5 <- ggplot(filter(rocs2, cnv %in% c('DEL')), 
+p5 <- ggplot(filter(rocs2, grp=='All' & cnv %in% c('DEL')), 
              aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
 print(p5)
 print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)))  # + ggtitle("Rank #5 first"))
 
 write.table(select(segs, family, sib1, sib2, mother, father, chr, start, end, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
+#################
+# distribution of non-2 lengths and gaps
+cnv.lens <- ddply(segs, .(family,all.wt), summarize, len=sum(end-start))
+ggplot(na.omit(cnv.lens), aes(x=len/4, fill=all.wt)) + geom_histogram() + ggtitle("Amount of WT vs non-WT") + xlab('Length of Segments')
 #################
 
 # Retrieve the discordant CNVs in SRPB1
