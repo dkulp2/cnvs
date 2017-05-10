@@ -19,8 +19,8 @@ library(caroline)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
-# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','smlx2csm','gpc_wave2_batch1','10')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1d_27apr2017")
+# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017mod/dataD/sites_cnv_segs.txt','smlx2csm','data_sfari_batch1D_27Apr2017','10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 data.label <- cmd.args[3]
