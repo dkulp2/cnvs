@@ -11,6 +11,7 @@ library(plyr)
 library(dplyr)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1D_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm smlxcsm flt smlx2csm',' '))
 #cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','smlxcsm','flt','smlx2csm')
 #cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','bayescsm','bayesxcsm','bayesflt','bayesx2csm')
 cnv.seg.fn <- cmd.args[1]
