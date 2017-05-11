@@ -37,9 +37,9 @@ db <- src_postgres()
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
-    bin.df <- dbGetQuery(db$con, sprintf("SELECT ps.bin, ps.start_pos, ps.end_pos FROM profile_segment ps WHERE ps.chrom='%s' AND ps.start_pos <= %s AND ps.end_pos >= %s", chr, pos, pos))
-    stopifnot(nrow(bin.df)==1)
-    return(bin.df$bin)
+  bin.df <- dbGetQuery(db$con, sprintf("SELECT ps.bin, ps.start_pos, ps.end_pos FROM profile_segment ps WHERE ps.chrom='%s' AND ps.start_pos <= %s AND ps.end_pos >= %s", chr, pos, pos))
+  stopifnot(nrow(bin.df)==1)
+  return(bin.df$bin)
 }
 
 # get the sample count for the data.label set, so we can store the CNV frequency for each prior
