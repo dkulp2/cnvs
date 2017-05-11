@@ -577,6 +577,7 @@ auc <- function(x,y) {
 
 
 all.cts <- mutate(cts(segs), family='ALL', grp='All')
+ggplot(filter(all.cts, cnv == 'DEL'), aes(x=len.min, y=conc.cnv.pct)) + geom_point() + geom_line() + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) 
 
 # remove segments from df that overlap range ab
 excl.loci <- function(df,ab) {
