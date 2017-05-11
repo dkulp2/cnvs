@@ -316,7 +316,7 @@ csm.new <- ddply(csm, .(.id), function(df) {
   zlen <- which(df$start.bin==df$end.bin)
   if (length(zlen)>0) {  
       message(Sys.time(),sprintf(": Removing %s zero length segments at %s", length(zlen), df$start.bin[zlen]))
-      df <- df[-zlen]
+      df <- df[-zlen,]
   }
 
   df$dCN.R <- c(df$cn[2:nrow(df)]-df$cn[1:(nrow(df)-1)],0)
