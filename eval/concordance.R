@@ -110,7 +110,7 @@ load.cnvs <- function(d) {
       sample.id <- first(df$.id)
       chr <- first(df$chr)
       cat(sample.id,"\n")
-      # df <- filter(cn.segs.merged, .id=='SSC00735')
+      # df <- filter(cn.segs.merged, .id=='SSC05534')
       if (!is.null(df$idx)) { df <- arrange(df, idx) }
 
       while (any(df$end.bin < df$start.bin)) {
@@ -139,7 +139,7 @@ load.cnvs <- function(d) {
       zlen <- which(df$start.bin==df$end.bin)
       if (length(zlen)>0) {
         message(Sys.time(),sprintf(": Removing %s zero length segments at %s", length(zlen), df$start.bin[zlen]))
-        df <- df[-zlen]
+        df <- df[-zlen,]
       }
       
       row.range <- 2:nrow(df)
@@ -229,13 +229,13 @@ ddply(quartets, .(family), function(fam) {
       while (!is.na(pos) && pos < max(ibd.fam.chr$END)) {
         next.pos <- min(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], 
                         par1$end.map[par1.idx], par2$end.map[par2.idx], na.rm=TRUE)
-        #print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], par1$end.map[par1.idx], par2$end.map[par2.idx]))
+#        print(c(next.pos <=pos, ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], par1$end.map[par1.idx], par2$end.map[par2.idx]))
         if (next.pos <= pos) { 
-          print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx], 
-                  par1$end.map[par1.idx], par2$end.map[par2.idx]))
+         print(c(ibd.fam.chr$END[ibd.idx], sib1$end.map[sib1.idx], sib2$end.map[sib2.idx],
+                 par1$end.map[par1.idx], par2$end.map[par2.idx]))
         }
 
-        #print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
+#        print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
         if (!is.na(next.pos)) {
           cat(paste0(paste(fam$family, fam$sib1, fam$sib2, fam$mother, fam$father, chr, pos, next.pos, sib1$cn[sib1.idx], sib2$cn[sib2.idx], par1$cn[par1.idx], par2$cn[par2.idx],
                            ibd.code(ibd.fam.chr[ibd.idx,]), sep=','),"\n"), file=t1.conn)
@@ -247,8 +247,8 @@ ddply(quartets, .(family), function(fam) {
           if (par2.idx <= nrow(par2) && next.pos >= par2$end.map[par2.idx]) { par2.idx <- par2.idx + 1 }
         }        
 
-        #print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
-        #print(c(pos,next.pos))
+#        print(c(ibd.idx, sib1.idx, sib2.idx, par1.idx, par2.idx))
+#        print(c(pos,next.pos))
         pos <- next.pos
       }
     } else {
