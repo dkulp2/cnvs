@@ -6,7 +6,7 @@ qsub_std_args="-w e -j y -b y -V -cwd -r y"
 
 # or -q [long|short] (short is up to four hours)
 for Q in A B C D; do
-echo   TAG=${TAG} qsub ${qsub_std_args} -l h_vmem=6g -q long -o log/$Q.log ./prep_and_run.sh $Q
+echo   TAG=${TAG} qsub ${qsub_std_args} -l h_vmem=8g -q long -o log/$Q.log ./prep_and_run.sh $Q
 done
 
 

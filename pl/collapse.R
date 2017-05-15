@@ -11,8 +11,8 @@ library(plyr)
 library(dplyr)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','smlcsm','smlxcsm','flt','smlx2csm')
-#cmd.args <- c('C:\\cygwin64\\home\\dkulp\\data\\out\\cnv_seg.B12.L500.Q13.4\\sites_cnv_segs.txt','bayescsm','bayesxcsm','bayesflt','bayesx2csm')
+#cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataD/sites_cnv_segs.txt','smlcsm','smlxcsm','flt','smlx2csm')
+#cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1D_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm smlxcsm flt smlx2csm',' '))
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 method.rdata.out <- cmd.args[3]
@@ -34,14 +34,13 @@ overlap <- function(df, start.name='start.map', end.name='end.map', seg='seg') {
   i2n <- 2:nrow(df2)
   
   # perform closure. repeat until no change.
-  df2$has.ovlp2 <- rep(FALSE, nrow(df2))
   df2$end.max <- df2[[end.name]]
   again <- TRUE
   while (again) {
     df2$has.ovlp <- c(FALSE, df2[[start.name]][i2n] < df2$end.max[i2n-1])
-    df2$end.max <- c(df2[[end.name]][1], ifelse(df2$has.ovlp[i2n], pmax(df2$end.max[i2n],df2$end.max[i2n-1]), df2$end.max[i2n]))
-    again <- !all(df2$has.ovlp==df2$has.ovlp2)
-    df2$has.ovlp2 <- df2$has.ovlp
+    df2$end.max2 <- c(df2[[end.name]][1], ifelse(df2$has.ovlp[i2n], pmax(df2$end.max[i2n],df2$end.max[i2n-1]), df2$end.max[i2n]))
+    again <- !all(df2$end.max == df2$end.max2)
+    df2$end.max <- df2$end.max2
   }
   
   # starts are where there is no overlap

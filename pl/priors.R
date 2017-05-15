@@ -19,8 +19,9 @@ library(caroline)
 library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
-# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=gpc_wave2_batch1")
-# cmd.args <- c('/cygwin64/home/dkulp/data/out/cnv_seg.B12.L500.Q13.3/sites_cnv_segs.txt.debug','smlx2csm','gpc_wave2_batch1','10')
+# Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1d_27apr2017")
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1D_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlx2csm data_sfari_batch1D_27Apr2017 10',' '))
+# cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017mod/dataD/sites_cnv_segs.txt','smlx2csm','data_sfari_batch1D_27Apr2017','10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
 data.label <- cmd.args[3]
@@ -37,9 +38,9 @@ db <- src_postgres()
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
-    bin.df <- dbGetQuery(db$con, sprintf("SELECT ps.bin, ps.start_pos, ps.end_pos FROM profile_segment ps WHERE ps.chrom='%s' AND ps.start_pos <= %s AND ps.end_pos >= %s", chr, pos, pos))
-    stopifnot(nrow(bin.df)==1)
-    return(bin.df$bin)
+  bin.df <- dbGetQuery(db$con, sprintf("SELECT ps.bin, ps.start_pos, ps.end_pos FROM profile_segment ps WHERE ps.chrom='%s' AND ps.start_pos <= %s AND ps.end_pos >= %s", chr, pos, pos))
+  stopifnot(nrow(bin.df)==1)
+  return(bin.df$bin)
 }
 
 # get the sample count for the data.label set, so we can store the CNV frequency for each prior
@@ -99,7 +100,7 @@ save.prior <- function(bkpt.prior, chr, seg, samples, label, n, total.samples, s
     dbGetQuery(db$con, "CREATE TABLE prior_region (id serial primary key, chr varchar(2), binL integer, binR integer, seg text, samples text, label text, n integer, total integer, side char, dCN char, FOREIGN KEY (chr, binL) REFERENCES profile_segment(chrom,bin), FOREIGN KEY (chr, binR) REFERENCES profile_segment(chrom,bin))")
   }
   
-  this.prior.region <- dbGetQuery(db$con, sprintf("SELECT * from prior_region WHERE chr='%s' and binL='%s' and dCN='%s'", chr, min(bkpt.prior$bin), dCN))
+  this.prior.region <- dbGetQuery(db$con, sprintf("SELECT * from prior_region WHERE chr='%s' and binL='%s' and side='%s' and dCN='%s'", chr, min(bkpt.prior$bin), side, dCN))
   if (nrow(this.prior.region) >= 1) {
     cat(sprintf("There are already %s prior_region rows starting at %s\n", nrow(this.prior.region), min(bkpt.prior$bin)))
   }

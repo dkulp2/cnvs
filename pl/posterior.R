@@ -21,7 +21,8 @@ library(reshape)
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_27apr2017")
-# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/11Apr2017/data_sfari_batch1D_11Apr2017b/B12.L5.Q13.W10.PB0.7.ML2400/sites_cnv_segs.txt smlcsm data_sfari_batch1D_11Apr2017b data_sfari_batch1D_11Apr2017b 0.7 10',' '))
+# cmd.args <- unlist(strsplit('/home/unix/dkulp/data/out/27Apr2017/data_sfari_batch1C_27Apr2017/B12.L5.Q13.W10.PB0.7.ML1e7/sites_cnv_segs.txt smlcsm data_sfari_batch1C_27Apr2017 data_sfari_batch1C_27Apr2017 0.7 10',' '))
+# cmd.args <- unlist(strsplit('/cygwin64/home/dkulp/data/SFARI.27April2017mod/dataC/sites_cnv_segs.txt smlcsm data_sfari_batch1C_27Apr2017 data_sfari_batch1C_27Apr2017 0.7 10',' '))
 # cmd.args <- c('/cygwin64/home/dkulp/data/SFARI.27April2017/dataC/sites_cnv_segs.txt','smlcsm','data_sfari_batch1C_27Apr2017','data_sfari_batch1C_27Apr2017','.7', '10')
 cnv.seg.fn <- cmd.args[1]
 cnv.seg.method <- cmd.args[2]
@@ -33,9 +34,12 @@ PAD <- as.numeric(cmd.args[6])
 # predicted CNVs
 load(sprintf("%s.%s.Rdata",cnv.seg.fn,cnv.seg.method)) # => cn.segs.merged
 cnvs <- as.tbl(cn.segs.merged)
+cnvs$idx <- 1:nrow(cnvs)
 
 # connect to DB
 db <- src_postgres()
+prior.region <- tbl(db,'prior_region')
+prior <- tbl(db,'prior')
 
 invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 
@@ -43,7 +47,7 @@ invisible(dbGetQuery(db$con, "BEGIN TRANSACTION"))
 # retrieve them all into memory so it's easy to do a bin=>pos mapping
 profile.segments <- tbl(db, 'profile_segment') %>% collect(n=Inf)
 # save(profile.segments, file="/cygwin64/tmp/profile_segments.Rdata")
-# load("/tmp/profile_segments.Rdata")
+# load("/cygwin64/tmp/profile_segments.Rdata")
 
 # return the bin for the genomic coordinate
 posToBin <- function(chr, pos) {
@@ -59,17 +63,36 @@ binToPos <- function(bin) {
     df$start_pos + (df$end_pos - df$start_pos) %/% 2
 }
 
-fetch.prior <- function(label, chr, pos, change) {
-  bin <- posToBin(chr, pos)
-  dbGetQuery(db$con, sprintf("SELECT p.*, pr.* FROM prior p, prior_region pr 
-                             WHERE pr.label='%s' AND pr.chr='%s' AND pr.binL <= %s AND pr.binR >= %s AND p.region_id = pr.id AND pr.dcn ='%s'
-                             ORDER BY pr.binL",
-                             label, chr, bin, bin, change))
+# return a null-op / no change posterior
+nc <- function(bin,change) {
+  return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+}
+
+fetch.prior <- function(label, chr, bin, change) {
+  # there may be multiple loss (gain) priors that overlap our bin. Choose only one that best straddles the bin
+  pr <- filter(prior.region, label==label & chr==chr & binl <= bin & binr >= bin & dcn==change) %>% collect
+  if (nrow(pr) == 0) {
+    message(Sys.time(),sprintf(": Warning. No prior at (%s,%s,%s,%s)", label,chr,bin,change))
+    return(data.frame())
+  } 
+  
+  if (nrow(pr)>1) {
+    message(Sys.time(),sprintf(": Notice. Multiple priors at (%s,%s,%s,%s) id=%s", label,chr,bin,change, pr$id))
+  }
+  
+  pr$dist <- pmin(bin-pr$binl,pr$binr-bin)
+  pr.best <- which.max(pr$dist)
+  pr.id <- pr$id[pr.best]
+  pr.n <- pr$n[pr.best]
+  pr.total <- pr$total[pr.best]
+
+  filter(prior, region_id==pr.id) %>% arrange(bin) %>% collect %>% mutate(n=pr.n, total=pr.total)
 }
 
 # calculate the CI by growing greadily away from max. 
 conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
-  p <- p / sum(p)  # make a density
+  if (any(is.na(p))) { message(Sys.time(),": Warning interval contains NA. Ignoring for now. FIX ME.") }
+  p <- p / sum(p, na.rm=TRUE)  # make a density
   best.pos <- which.max(p)
   i <- best.pos - 1
   j <- best.pos + 1
@@ -95,12 +118,10 @@ conf.int <- function(p, pos=seq(1,length(p)), conf=0.95) {
 # Blend priors.
 # Merge likelihood and priors, dealing with missing data in overlap.
 # Compute posterior and return CI.
-mk.posterior <- function(df, pos, change) {
+mk.posterior <- function(df, bin, change) {
   
-  bin <- posToBin(df$chr, pos)
-
-  if (change=='N') {
-    return(data.frame(best=bin, conf.L=bin, conf.R=bin, bin=bin, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+  if (is.na(change) || change=='N') {
+    return(nc(bin,change))
   }
   
                                         # load likelihoods for this sample
@@ -109,10 +130,10 @@ mk.posterior <- function(df, pos, change) {
   bkpts <- dbGetQuery(db$con, sprintf("SELECT b.chr, b.bkpt_bin as bin, b.sample, loss_ll, gain_ll, no_bkpt_ll, b.label FROM bkpt b WHERE b.chr='%s' AND b.sample IN ('%s') AND b.bkpt_bin BETWEEN %s AND %s AND b.label = '%s' ORDER BY b.chr, b.bkpt_bin", 
                                       df$chr, df$.id, binL, binR, test.label))
 
-    if (nrow(bkpts) == 0) {
-        warning("bkpts returned 0 rows between bins ",binL,"..",binR)
-        return(data.frame(best=pos, best.bin=bin, conf.L=pos, conf.R=pos, pos=pos, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
-    }
+  if (nrow(bkpts) == 0) {
+    message(Sys.time(),": bkpts returned 0 rows between bins ",binL,"..",binR)
+    return(nc(bin,change))
+  }
 
   bkpts <- mutate(bkpts,
                   loss=10^-loss_ll, 
@@ -136,11 +157,19 @@ mk.posterior <- function(df, pos, change) {
   
   
   # load prior that overlaps the initial breakpoint, if any, from external
-  prior.ext <- fetch.prior(external.label, df$chr, pos, change)
+  prior.ext <- fetch.prior(external.label, df$chr, bin, change)
   
   # load "prior" from test data 
   # TODO: compute prior on-the-fly, excluding current sample?
-  prior.int <- fetch.prior(test.label, df$chr, pos, change)
+  prior.int <- fetch.prior(test.label, df$chr, bin, change)
+
+  if (nrow(prior.ext)==0 && nrow(prior.int)==0) {
+    return(nc(bin,change))
+  }
+  if (first(prior.int$n)==1 && first(prior.ext$n)==1) {
+    message(Sys.time(),": Skipping posterior calculation. Prior sample count is 1.")
+    return(nc(bin,change))
+  }
   
   if (nrow(prior.ext) == 0) {
     priors <- prior.int
@@ -220,33 +249,33 @@ mk.posterior <- function(df, pos, change) {
 }
 
 if (dbExistsTable(db$con, "posterior")) {
-  invisible(dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label))
+#  invisible(dbGetQuery(db$con, "DELETE FROM posterior WHERE label=$1", test.label))
+  invisible(dbGetQuery(db$con, "DROP TABLE posterior"))
 }
 if (dbExistsTable(db$con, "posterior_dist")) {
-  invisible(dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label))
+#  invisible(dbGetQuery(db$con, "DELETE FROM posterior_dist WHERE label=$1", test.label))
+  invisible(dbGetQuery(db$con, "DROP TABLE posterior_dist"))
 }
 
 # for each predicted CNV, compute a new normalized density for each breakpoint based on the joint probability of the likelihood and prior.
-#pv <- profvis({
-  res <-
-    ddply(filter(cnvs, cn!=2), .(label), function(df) {
-        cat(df$label,"\n")
-        label.pieces <- unlist(strsplit(df$label, '_'))
-        if (label.pieces[3] == label.pieces[4]) {
-            print("FIXME: Empty region")
-        } else if (nrow(df) > 1) {
-            print("BUG: FIx Me. Should only be one row per label from staircase.R")
-            print(df) 
-        }
-        else {
-            posterior.L <- mutate(mk.posterior(df, df$start.map, df$dL), side='L')
-            posterior.R <- mutate(mk.posterior(df, df$end.map, df$dR), side='R')
-            return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label)))
-        }
-    })
-#})
+message(Sys.time(),sprintf(": Estimating maximum aposterior breakpoint for %s cnvs", nrow(cnvs)))
+res <-
+  ddply(cnvs, .(label), function(df) {
+    cat(df$label,"\n")
+    if (nrow(df) > 1) {
+      message(Sys.time(),": BUG: FIx Me. Should only be one row per label from staircase.R")
+      print(df) 
+    }
+    else {
+      posterior.L <- mutate(mk.posterior(df, posToBin(df$chr, df$start.map), df$dL), side='L')
 
-dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','bin','change','prior.int.id','prior.ext.id','side','.id','chr','label')], 
+      posterior.R <- mutate(mk.posterior(df, posToBin(df$chr, df$end.map), df$dR), side='R')
+      
+      return(cbind(rbind(posterior.L, posterior.R), data.frame(.id=df$.id, chr=df$chr, label=df$label, idx=df$idx)))
+    }
+  })
+
+dbWriteTable(db$con, "posterior", mutate(res[,c('best','conf.L','conf.R','bin','change','prior.int.id','prior.ext.id','side','.id','chr','label','idx')], 
                                          seg=label, label=test.label), append=TRUE, row.names = FALSE)
 
 
@@ -254,11 +283,11 @@ dbCommit(db$con)
 dbGetQuery(db$con, "VACUUM ANALYZE posterior")
 
 # write a reduced version of smlcsm to the database
-if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle") }
-dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R")]))
+if (dbExistsTable(db$con, "cnv_mle")) { dbGetQuery(db$con, "DROP TABLE cnv_mle CASCADE") }
+dbWriteTable(db$con, "cnv_mle", as.data.frame(cnvs[,c(".id","label","cn","chr","start.map","end.map","dCN.L","dCN.R","dL","dR","start.map.L","start.map.R","start.map.win.size","start.map.L.tail","start.map.R.tail","start.bin.L","start.bin.R","start.bin","start.binCI.L","start.binCI.R","end.map.L","end.map.R","end.map.win.size","end.map.L.tail","end.map.R.tail","end.bin.L","end.bin.R","end.bin","end.binCI.L","end.binCI.R","idx")]))
 
 # retrieve a new prediction set, replacing the breakpoints with those estimated here.
-cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\'', test.label, test.label))
+cnvs.post <- dbGetQuery(db$con, sprintf('SELECT c.".id", c.label, c.chr, p."conf.L" as "start.CI.L", p.best as "start.map", p."conf.R" as "start.CI.R", p2."conf.L" as "end.CI.L", p2.best as "end.map", p2."conf.R" as "end.CI.R", c.cn, c.idx FROM cnv_mle c, posterior p, posterior p2 WHERE c.label=p.seg AND c.label=p2.seg AND p.side=\'L\' AND p2.side=\'R\' AND p.label=\'%s\' AND p2.label=\'%s\' ORDER by c.idx', test.label, test.label))
 
 # convert all coordinates to genomic for compatibility with other "cn.segs.merged" tables
 cn.segs.merged <- mutate(cnvs.post,
@@ -273,7 +302,7 @@ cn.segs.merged$copy.number <- addNA(as.factor(cn.segs.merged$cn))
 write.table(select(cn.segs.merged, .id, label, chr, start.CI.L, as.integer(start.map), start.CI.R, end.CI.L, as.integer(end.map), end.CI.R, copy.number), file=sprintf("%s.bayesCI.tbl",cnv.seg.fn), sep="\t", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
 # write new posterior version to db
-if (dbExistsTable(db$con, "cnv_post")) { invisible(dbGetQuery(db$con, "DROP TABLE cnv_post")) }
+if (dbExistsTable(db$con, "cnv_post")) { invisible(dbGetQuery(db$con, "DROP TABLE cnv_post CASCADE")) }
 dbWriteTable(db$con, "cnv_post", cn.segs.merged)
 invisible(dbGetQuery(db$con, "CREATE INDEX on cnv_post(chr, \"start.map\", \".id\")"))
 
