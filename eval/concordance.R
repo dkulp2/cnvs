@@ -33,6 +33,7 @@ basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.11Apr2017'
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.11Apr2017b'
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.27April2017'
 basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.27April2017mod'
+basedir <- 'C:\\cygwin64\\home\\dkulp\\data\\SFARI.15May2017'
 
 sibs <- c('dataA','dataB')
 parents <- c('dataC','dataD')
@@ -40,6 +41,7 @@ parents <- c('dataC','dataD')
 ibd.bed.fn <- sprintf("%s/merged_ibd_regions.bed", basedir)
 ped.fn <- sprintf("%s/sample_pedigrees.ped", basedir)
 cnv.fn <- 'sites_cnv_segs.txt.bayescsm.Rdata'
+#cnv.fn <- 'sites_cnv_segs.txt.smlcsm.Rdata'
 
 ibd <- read.table(ibd.bed.fn, header=TRUE, stringsAsFactors = FALSE)
 ibd <- filter(ibd, CHR=='20')  # FIXME: remove later
@@ -265,6 +267,7 @@ segs <- read.csv(t1.fn, as.is=TRUE, check.names=FALSE, header=FALSE)
 colnames(segs) <- c('family','sib1','sib2','mother','father','chr','start','end','sib1.cn','sib2.cn','par1.cn','par2.cn','ibd.state')
 
 segs$cn.na <- is.na(segs$sib1.cn) | is.na(segs$sib2.cn) | is.na(segs$par1.cn) | is.na(segs$par2.cn)
+segs$all.cn.na <- is.na(segs$sib1.cn) & is.na(segs$sib2.cn) & is.na(segs$par1.cn) & is.na(segs$par2.cn)
 segs$sib.eq <- (segs$sib1.cn == segs$sib2.cn)
 segs$all.eq <- (segs$sib.eq & segs$sib1.cn==segs$par1.cn & segs$sib1.cn==segs$par2.cn)
 segs$sib.del <- segs$sib1.cn < 2 | segs$sib2.cn < 2
@@ -413,12 +416,13 @@ mk.segs.group <- function(group.sz) {
                                                                     ends=segs.chr.fam[[i]]$end[fam.row[i]], 
                                                                     starts=segs.chr.fam[[i]]$start[fam.row[i]], 
                                                                     len=segs.chr.fam[[i]]$len[fam.row[i]],
+                                                                    all.na=segs.chr.fam[[i]]$all.cn.na[fam.row[i]],
                                                                     cn2=(segs.chr.fam[[i]]$all.eq[fam.row[i]] & segs.chr.fam[[i]]$sib1.cn[fam.row[i]]==2))) })
           min.end <- min(rows$ends)
           max.start <- max(rows$starts)
           match.min.end <- rows$ends==min.end
           
-          if (!is.na(all(rows$cn2)) & min.end - pos > big2 & all(rows$cn2)) {
+          if (!is.na(all(rows$cn2)) & min.end - pos > big2 & (all(rows$cn2) || all(rows$all.na))) {
             # push the row indices for all samples
             all.cn2[[length(all.cn2)+1]] <- fam.row
             
@@ -468,8 +472,10 @@ segs.all <- mk.segs.group(100)
 pdf("concordance.pdf")
 MIN.OVLP.LEN <- 1400
 sapply(segs.group, function(df) {
- print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN & cnv!='WT'), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) +
-     geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
+  print(ggplot(filter(df, !is.na(ibd.state) & !(cnv %in% c('WT','DEL','BI')) & len>MIN.OVLP.LEN), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) +
+          geom_segment(size=2) + geom_point() + facet_grid(.~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
+  # print(ggplot(filter(df, !is.na(ibd.state) & !all.wt & len>MIN.OVLP.LEN & cnv!='WT'), aes(x=start, xend=end, y=fam, yend=fam, color=concordant)) +
+  #    geom_segment(size=2) + geom_point() + facet_grid(ibd.state~cnv) + ggtitle(paste0('Samples ',df$family[1],'..',df$family[nrow(df)],"\ninterval > ",MIN.OVLP.LEN)))
 })
 dev.off()
 
@@ -481,8 +487,14 @@ sa2 <- filter(segs.all[[1]], !is.na(ibd.state))
 print(ggplot(filter(sa2, len>MIN.OVLP.LEN), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
         geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",MIN.OVLP.LEN)))
 
-# xlm <- xlim(0.6295e7,.6303e7)
-# xlm <- xlim(6.0517e7,6.0525e7)
+print(ggplot(filter(sa2, len>1e5 & concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
+        geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",MIN.OVLP.LEN)))
+
+# xlm <- xlim(0.1584e7, 0.1591e7)
+# xlm <- xlim(2.949e7, 2.951e7)
+# xlm <- xlim(4.1243e7, 4.125e7)
+# xlm <- xlim(3.3242e7, 3.3245e7)
+# 
 # print(ggplot(filter(sa1, len>MIN.OVLP.LEN & !concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
 #        geom_segment(size=2) + geom_point() + ggtitle(sprintf("Discordant Sites\nInterval > %s nt",MIN.OVLP.LEN)) + xlm)
 
@@ -521,20 +533,17 @@ bad.loci <- list(
   c(1.585e6,1.592e6,8))
 
 bad.loci <- list(
-  c(.158e7,.16e7,1),
-  c(.6296e7,.6297e7,2),
-  c(2.575e7,2.581e7,3),
-  c(2.949e7,2.951e7,4),
-  c(4.124e7,4.125e7,5),
-  c(6.05175e7,6.0519e7,6)
-  
+  c(2.949e7, 2.951e7,1),  # a high frequency all concordant locus to the left, this is a 5000nt tail region with a few more discordant than concordant
+  c(0.1584e7, 0.1591e7,2),# 4000nt part of almost 100% frequency CNV where about 1/3 are discordant
+  c(4.1243e7, 4.125e7,3), # more than 40 concordant and less than 5 discordant
+  c(3.3242e7, 3.3245e7,4) # these are < 1400nt
 )
 
-pdf("discordant_loci.pdf")
-lapply(bad.loci, function(ab) {
-  z4p(z4, ab[1],ab[2], ab[3])
-})
-dev.off()
+# pdf("discordant_loci.pdf")
+# lapply(bad.loci, function(ab) {
+#   z4p(z4, ab[1],ab[2], ab[3])
+# })
+# dev.off()
 
 # count concordance by base and cnv
 len.max <- 15000
@@ -545,7 +554,6 @@ steps <- c(seq(0,50,1), seq(60,len.max/100,10))
 cts <- function(segs.subset) {
   ldply(steps, function(len.min) {
     z <- ddply(filter(segs.subset, !is.na(ibd.state) & end.bin-start.bin > len.min), .(cnv), function(df) {
-#    z <- ddply(filter(segs.subset, !is.na(ibd.state) & len > len.min), .(cnv), function(df) {
       mutate(data.frame(len.min,tot.bases=sum(as.numeric(df$len)), 
                         conc.bases=sum(as.numeric(df$len[df$concordant])),
                         ncnv=nrow(df), 
@@ -577,7 +585,7 @@ auc <- function(x,y) {
 
 
 all.cts <- mutate(cts(segs), family='ALL', grp='All')
-ggplot(filter(all.cts, cnv == 'DEL'), aes(x=len.min, y=conc.cnv.pct)) + geom_point() + geom_line() + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) 
+ggplot(filter(all.cts, cnv == 'DEL'), aes(x=len.min, y=conc.cnv.pct)) + geom_point() + geom_line() + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) + ggtitle("Posterior, No Prior N=1")
 
 # remove segments from df that overlap range ab
 excl.loci <- function(df,ab) {
@@ -591,13 +599,14 @@ rocs <- llply(bad.loci, function(ab) {
 rocs[['All']] <- mutate(cts(segs),grp="All")
 rocs.hold1 <- do.call(rbind, rocs)
 rocs.hold1$all <- rocs.hold1$grp=='All'
-ggplot(filter(rocs.hold1, cnv %in% c('DEL') & all), 
-             aes(x=len.min, y=conc.cnv.pct, color=grp, size=all))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) + guides(size="none")
+ggplot(filter(rocs.hold1, cnv %in% c('DEL')), 
+             aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2) + xlim(0,30)+ylim(0.8,1) + guides(size="none")
 
 # generate AUC for each of the "hold one out" ROCs
-auc.res <- ldply(rocs, function(df) {
+auc.calc <- function(df) {
   ddply(df, .(cnv,grp), summarize, auc=auc(len.min, conc.cnv.pct))
-})
+}
+auc.res <- ldply(rocs, auc.calc)
 
 # Ranking the results by their independent impact on AUC for DELs
 # > auc.res %>% filter(cnv=='DEL') %>% arrange(auc)
@@ -618,7 +627,14 @@ excl.order <- rev(c(6,7,2,5,1,4,3))
 # put #5 first
 excl.order <- rev(c(6,7,2,1,4,3,5))
 
-excl.order <- c(1,6,2,4,3)
+# > auc.res %>% filter(cnv=='DEL') %>% arrange(auc)
+# .id cnv                               grp       auc
+# 1     DEL   All but #2 (20:1584000-1591000) 0.9861576
+# 2 All DEL                               All 0.9865080
+# 3     DEL All but #4 (20:33242000-33245000) 0.9865646
+# 4     DEL All but #3 (20:41243000-41250000) 0.9866056
+# 5     DEL All but #1 (20:29490000-29510000) 0.9868966
+excl.order <- c(1,4,3) # 2 not included because worsens ROC
 
 segs.ex <- list(segs)
 lapply(excl.order, function(i) {
@@ -633,10 +649,16 @@ rocs2 <- ldply(1:length(excl.label), function(i) {
   mutate(cts(segs.ex[[i]]),grp=excl.label[i])
 })
 
-p5 <- ggplot(filter(rocs2, grp=='All' & cnv %in% c('DEL')), 
+p5 <- ggplot(filter(rocs2, cnv %in% c('DEL')), 
              aes(x=len.min, y=conc.cnv.pct, color=grp))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
 print(p5)
-print(p5 + xlim(c(5,50)) + coord_cartesian(ylim=c(0.8,1)))  # + ggtitle("Rank #5 first"))
+print(p5 + xlim(c(5,30)) + coord_cartesian(ylim=c(0.8,1)))  # + ggtitle("Rank #5 first"))
+
+auc.calc(rocs2) %>% filter(cnv=='DEL') %>% arrange(auc)
+
+p6 <- ggplot(filter(rocs3, cnv %in% c('DEL') & grp=='All'), 
+       aes(x=len.min, y=conc.cnv.pct, color=method))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
+print(p6 + xlim(c(5,30)) + coord_cartesian(ylim=c(0.8,1)))
 
 write.table(select(segs, family, sib1, sib2, mother, father, chr, start, end, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
