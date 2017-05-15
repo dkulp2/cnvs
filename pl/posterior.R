@@ -70,14 +70,14 @@ nc <- function(bin,change) {
 
 fetch.prior <- function(label, chr, bin, change) {
   # there may be multiple loss (gain) priors that overlap our bin. Choose only one that best straddles the bin
-  pr <- filter(prior.region, label==label & chr==chr & binl <= bin & binr >= bin & change==change) %>% collect
+  pr <- filter(prior.region, label==label & chr==chr & binl <= bin & binr >= bin & dcn==change) %>% collect
   if (nrow(pr) == 0) {
     message(Sys.time(),sprintf(": Warning. No prior at (%s,%s,%s,%s)", label,chr,bin,change))
     return(data.frame())
   } 
   
   if (nrow(pr)>1) {
-    message(Sys.time(),sprintf(": Notice. Multiple priors at (%s,%s,%s,%s)", label,chr,bin,change))
+    message(Sys.time(),sprintf(": Notice. Multiple priors at (%s,%s,%s,%s) id=%s", label,chr,bin,change, pr$id))
   }
   
   pr$dist <- pmin(bin-pr$binl,pr$binr-bin)
@@ -131,7 +131,7 @@ mk.posterior <- function(df, bin, change) {
                                       df$chr, df$.id, binL, binR, test.label))
 
   if (nrow(bkpts) == 0) {
-    warning("bkpts returned 0 rows between bins ",binL,"..",binR)
+    message(Sys.time(),": bkpts returned 0 rows between bins ",binL,"..",binR)
     return(nc(bin,change))
   }
 
@@ -162,6 +162,14 @@ mk.posterior <- function(df, bin, change) {
   # load "prior" from test data 
   # TODO: compute prior on-the-fly, excluding current sample?
   prior.int <- fetch.prior(test.label, df$chr, bin, change)
+
+  if (nrow(prior.ext)==0 && nrow(prior.int)==0) {
+    return(nc(bin,change))
+  }
+  if (first(prior.int$n)==1 && first(prior.ext$n)==1) {
+    message(Sys.time(),": Skipping posterior calculation. Prior sample count is 1.")
+    return(nc(bin,change))
+  }
   
   if (nrow(prior.ext) == 0) {
     priors <- prior.int
