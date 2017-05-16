@@ -660,8 +660,16 @@ p6 <- ggplot(filter(rocs3, cnv %in% c('DEL') & grp=='All'),
        aes(x=len.min, y=conc.cnv.pct, color=method))+ geom_line() + facet_grid(cnv~.) + xlab("Min Segment Size") + ylab("Concordance") + ggtitle("Quartet Concordance By CNV")  + geom_vline(xintercept = 12, linetype=2)
 print(p6 + xlim(c(5,30)) + coord_cartesian(ylim=c(0.8,1)))
 
-write.table(select(segs, family, sib1, sib2, mother, father, chr, start, end, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
+segs$len.bin <- segs$end.bin-segs$start.bin
+write.table(select(segs, family, sib1, sib2, mother, father, chr, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin, len.bin), file="segs.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
 
+#######################
+write.table(select(segs.map.10, family, sib1, sib2, mother, father, chr, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin, len.bin), file="segs-map.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+# rocs.mle <- rocs2; segs.mle <- segs; segs.mle$len.bin <- segs.mle$end.bin - segs.mle$start.bin
+# save(rocs.mle, segs.mle, file="/cygwin64/tmp/mle_rocs2.Rdata")
+write.table(select(segs.mle.10, family, sib1, sib2, mother, father, chr, sib1.cn, sib2.cn, par1.cn, par2.cn, ibd.state, concordant, cnv, start.bin, end.bin, len.bin), file="segs-mle.txt", row.names=FALSE, col.names=FALSE, quote=FALSE)
+ 
 #################
 # distribution of non-2 lengths and gaps
 cnv.lens <- ddply(segs, .(family,all.wt), summarize, len=sum(end-start))
