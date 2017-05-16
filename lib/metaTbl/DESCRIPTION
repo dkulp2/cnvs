@@ -3,7 +3,7 @@ Title: Read and write tab-delimited tables with a metadata header
 Version: 0.0.0.9000
 Authors@R: person("David", "Kulp", email = "dkulp@broadinstitute.org", role = c("aut", "cre"))
 Description: Read and write tab-delimited tables with a metadata header
-Depends: R (>= 3.2.2), tibble
+Depends: R (>= 3.2), tibble
 Suggests: testthat
 License: Unknown
 LazyData: true
