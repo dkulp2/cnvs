@@ -14,8 +14,18 @@ source ${THISDIR}/../conf/cnv.conf
 
 SCRIPTS=${THISDIR}/../pl
 ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
+OUTLIER_BIN_FILTER=${SCRIPTS}/outlier_bin_filter.pl
 
 mkdir -p ${workDir}
+
+# Assume that if the profileFile is missing, then it is of the form dat.out.gz and use the original file of dat.gz to transform.
+if [ ! -f ${profileFile} ]; then
+    perl ${OUTLIER_BIN_FILTER} ${OUTLIER_MULTIPLE} ${profileFile%%.out.gz}.gz | gzip -c > ${profileFile}
+fi
+
+# generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
+awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} < ${profileFile} > ${SITES}
+
 eval "gunzip -c ${profileFile}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${workDir}/sites.txt
 
 # generate simplified tab files from VCF
