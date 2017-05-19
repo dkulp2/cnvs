@@ -343,6 +343,7 @@ into tasks.
 * Output: 
   * `Genome_Regions` (GR_ID, Chrom, StartP, EndP) - physical spans along chromosomes
   * `Sample_Sets` (Set1, sampleA), (Set1, sampleB) - groups of samples processed independently
+  * `Block_IDs` (ID1, ID2, etc.) - each ID corresponds to a pair <Sample_Sets, Genome_Regions>
 
 ### Job: Bin Definition ###
 
@@ -387,7 +388,7 @@ into tasks.
 * Action: Run org.broadinstitute.sv.apps.ProfileGenotyper on
   `Window_Map` segments using `Profile_Counts` in each segment. Convert
   VCF output into simpler table, one row per sample per window.  Each
-  window is identified by the first, leftmost bin.
+  window is identified by the middle bin.
 * Outputs:
   * VCF
   * `Geno` (_StartB_, _Sample_, CN, CNQ) - genotype calls and quality per
