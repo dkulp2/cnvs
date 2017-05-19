@@ -24,7 +24,6 @@ EXT_LABEL=${LABEL}  # label for external prior
 # auxiliary scripts
 SCRIPTS=${THISDIR}
 UTILS=${THISDIR}/../util
-ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
 VCF2TAB=${UTILS}/vcf2tab
 GSDEL2TAB=${UTILS}/gs_del2tab
 MERGE_CNV=${SCRIPTS}/merge_cnv.R
@@ -68,11 +67,6 @@ if [ ! -z ${SITE_COUNT} ]; then
     SITE_HEAD="| head -${SITE_COUNT}"
 else
     SITE_HEAD=""
-fi
-
-# generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
-if [ ! -f ${SITES} ]; then
-    eval "gunzip -c ${profileFile} ${SITE_HEAD}" | perl ${OUTLIER_BIN_FILTER} ${OUTLIER_MULTIPLE} | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
 fi
 
 # generate first pass genotypes of rolling windows
