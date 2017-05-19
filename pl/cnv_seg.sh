@@ -72,7 +72,7 @@ fi
 
 # generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
 if [ ! -f ${SITES} ]; then
-    eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
+    eval "gunzip -c ${profileFile} ${SITE_HEAD}" | perl ${OUTLIER_BIN_FILTER} ${OUTLIER_MULTIPLE} | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
 fi
 
 # generate first pass genotypes of rolling windows
