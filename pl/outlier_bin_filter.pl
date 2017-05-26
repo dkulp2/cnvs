@@ -39,7 +39,7 @@ while ($line = <$profileFh>) {
     if ($nr++ > 0) {
 	if ($nr > 2 and $cr*$K < $cr_m1 and $cr_m2*$K < $cr_m1) {
 	    my @pre_cols = split(/\t/,$line_m1);
-	    print join("\t",@pre_cols[0..5]).("\t0,0" x ($#cols-6))."\n";
+	    print join("\t",@pre_cols[0..5]).("\t0,0" x ($#cols-5))."\n";
 	} else {
 	    print $line_m1;
 	}
