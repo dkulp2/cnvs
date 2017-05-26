@@ -36,7 +36,6 @@ POSTERIOR=${SCRIPTS}/posterior.R
 
 # input and output files
 SAMPLES=${workDir}/samples${SAMPLE_COUNT}.list
-SITES=${workDir}/sites${SITE_COUNT}.txt
 
 export CNV_SEG_SITES_FILE=${workDir}/sites_cnv_segs.txt
 
@@ -79,7 +78,7 @@ if [ ! -f ${OUT1_VCF} ]; then
 	-ploidyMapFile `cygpath.shim -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
 	-segmentFile `cygpath.shim -w ${SITES}` \
 	-sample `cygpath.shim -w ${SAMPLES}` \
-	-O `cygpath.shim -w ${OUT1_VCF}` 
+	-O `cygpath.shim -w ${OUT1_VCF}` || rm ${OUT1_VCF}
 fi
 
 if [ ! -f ${OUT1_VCF}.txt ]; then
@@ -99,7 +98,7 @@ if [ ! -f ${CNV_SEG_SITES_FILE}.csm.Rdata ]; then
 	bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
 #	tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 	echo `date +"%F %T"` Loading genotypes to database
-	sql loadGeno.sql
+	sql ${THISDIR}loadGeno.sql
     fi
 
 
