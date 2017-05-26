@@ -5,7 +5,7 @@
 use strict;
 
 my $base="data_sfari_batch1";
-my $ext="_27apr2017";
+my $ext="_19may2017";
 
 print "CREATE SCHEMA ${base};\n";
 

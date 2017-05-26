@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export TAG=27Apr2017
+export TAG=19May2017
 
 qsub_std_args="-w e -j y -b y -V -cwd -r y"
 

@@ -24,7 +24,6 @@ EXT_LABEL=${LABEL}  # label for external prior
 # auxiliary scripts
 SCRIPTS=${THISDIR}
 UTILS=${THISDIR}/../util
-ROLLING_WINDOWS=${SCRIPTS}/choose_windows.awk
 VCF2TAB=${UTILS}/vcf2tab
 GSDEL2TAB=${UTILS}/gs_del2tab
 MERGE_CNV=${SCRIPTS}/merge_cnv.R
@@ -37,7 +36,6 @@ POSTERIOR=${SCRIPTS}/posterior.R
 
 # input and output files
 SAMPLES=${workDir}/samples${SAMPLE_COUNT}.list
-SITES=${workDir}/sites${SITE_COUNT}.txt
 
 export CNV_SEG_SITES_FILE=${workDir}/sites_cnv_segs.txt
 
@@ -70,11 +68,6 @@ else
     SITE_HEAD=""
 fi
 
-# generates rolling windows of size ELENGTH*NBINS, e.g. 100*10 = 1000
-if [ ! -f ${SITES} ]; then
-    eval "gunzip -c ${profileFile} ${SITE_HEAD}" | awk -v OFS="\t" -v NBINS=${NBINS} -v MAXLEN=${MAXLEN} -f ${ROLLING_WINDOWS} > ${SITES}
-fi
-
 # generate first pass genotypes of rolling windows
 if [ ! -f ${OUT1_VCF} ]; then
     time java -cp `cygpath.shim -wp ${SV_CLASSPATH}` -Xmx4g \
@@ -85,7 +78,7 @@ if [ ! -f ${OUT1_VCF} ]; then
 	-ploidyMapFile `cygpath.shim -w ${referenceFile} | sed 's/.fasta$/.ploidymap.txt/'` \
 	-segmentFile `cygpath.shim -w ${SITES}` \
 	-sample `cygpath.shim -w ${SAMPLES}` \
-	-O `cygpath.shim -w ${OUT1_VCF}` 
+	-O `cygpath.shim -w ${OUT1_VCF}` || rm ${OUT1_VCF}
 fi
 
 if [ ! -f ${OUT1_VCF}.txt ]; then
@@ -105,7 +98,7 @@ if [ ! -f ${CNV_SEG_SITES_FILE}.csm.Rdata ]; then
 	bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
 #	tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 	echo `date +"%F %T"` Loading genotypes to database
-	sql loadGeno.sql
+	sql ${THISDIR}loadGeno.sql
     fi
 
 
