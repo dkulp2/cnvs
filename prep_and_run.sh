@@ -5,6 +5,8 @@
 #
 # Runs on the A quartet. Uncomment prep or cpPrep depending on circumstance
 
+set -eu
+
 echo ====================
 date
 
