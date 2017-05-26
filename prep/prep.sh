@@ -34,7 +34,7 @@ if [ -f ${gsdelFile} -a -f ${gscnvFile} ]; then
 fi
 
 # Load database with profiles
-perl profile2db.pl -i ${profileFile} -s ${profileFile%%.dat.gz}.seg.txt.gz -p ${profileFile%%.dat.gz}.pro.txt.gz
-sql profile2db.sql
+perl ${THISDIR}/profile2db.pl -i ${profileFile} -s ${profileFile%%.dat.gz}.seg.txt.gz -p ${profileFile%%.dat.gz}.pro.txt.gz
+sql ${THISDIR}/profile2db.sql
 
 rm ${profileFile%%.dat.gz}.seg.txt.gz ${profileFile%%.dat.gz}.pro.txt.gz

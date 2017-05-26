@@ -180,7 +180,7 @@ cnq2 <- gather(cnq,sample,cnq,-BIN,-CHR,-START,-END)
 
 cnv.geno <- cbind(cn2, cnq=cnq2$cnq)
 
-colnames(cnv.geno) <- c('bin','chr','start_pos','end_pos', 'sample','cn')
+colnames(cnv.geno) <- c('bin','chr','start_pos','end_pos', 'sample','cn','cnq')
 cnv.geno$bin <- as.integer(cnv.geno$bin)
 cnv.geno$chr <- as.character(cnv.geno$chr)
 cnv.geno$cn <- as.integer(cnv.geno$cn)
@@ -189,7 +189,6 @@ rm(cn,cn2,cnq,cnq2)
 
 cnv.geno.exploded.fn <- sprintf("%s.cnvgeno.txt",cnv.seg.fn)
 cat(sprintf("Writing %s exploded genotype calls to %s\n",nrow(cnv.geno),cnv.geno.exploded.fn))
-colnames(cnv.geno) <- c('chr','start','end','sample','cn','cnq')
 write.table(cnv.geno, file=cnv.geno.exploded.fn, quote=FALSE, sep="\t", row.names=FALSE)
 
 cat(sprintf("Writing %s exploded genotype calls to table geno\n",nrow(cnv.geno)))

@@ -38,3 +38,4 @@ vignettes/*.pdf
 \#*\#
 concordance.pdf
 ui/viewCNV/env.txt
+doc/architecture.html

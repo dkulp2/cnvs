@@ -86,6 +86,13 @@ mk.posterior <- function(df, pos, change) {
   bkpts <- dbGetQuery(db$con, sprintf("SELECT b.*, ps.bin, ps.start_pos, ps.end_pos FROM bkpt b, profile_segment ps 
                                       WHERE b.sample='%s' AND ps.chrom='%s' AND ps.start_pos > %s AND ps.start_pos < %s AND ps.end_pos > %s AND ps.end_pos < %s AND b.chr = ps.chrom AND b.bkpt_bin = ps.bin 
                                       AND b.label='%s' ORDER BY ps.chrom, ps.start_pos", df$.id, df$chr, pos-2*PAD, pos+PAD, pos-PAD, pos+2*PAD, test.label))
+
+  # It's possible that there will be no return rows because a bin is so big that there is no start_pos for any bin within the desired range
+  # FIXME: operate in bin space instead.
+  if (nrow(bkpts) == 0) {
+    return(data.frame(best=pos, conf.L=pos, conf.R=pos, pos=pos, change=change, prior.int.id=NA_integer_, prior.ext.id=NA_integer_))
+  }
+
   bkpts <- mutate(bkpts,
                   loss=10^-loss_ll, 
                   gain=10^-gain_ll,
