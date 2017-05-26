@@ -208,11 +208,11 @@ cnv.geno.exploded.fn <- sprintf("%s.cnvgeno.txt",cnv.seg.fn)
 message(sprintf("%s: Writing %s exploded genotype calls to %s",Sys.time(), nrow(cnv.geno),cnv.geno.exploded.fn))
 write.table(cnv.geno, file=cnv.geno.exploded.fn, quote=FALSE, sep="\t", row.names=FALSE)
 
-message(sprintf("%s: Writing %s exploded genotype calls to db in table geno",Sys.time(), nrow(cnv.geno)))
-if (dbExistsTable(db$con, "geno")) { dbGetQuery(db$con, "DROP TABLE geno") }
-dbWriteTable(db$con, "geno", cnv.geno)
-message(Sys.time(),": indexing geno")
-dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin, sample)")
+## message(sprintf("%s: Writing %s exploded genotype calls to db in table geno",Sys.time(), nrow(cnv.geno)))
+## if (dbExistsTable(db$con, "geno")) { dbGetQuery(db$con, "DROP TABLE geno") }
+## dbWriteTable(db$con, "geno", cnv.geno)
+## message(Sys.time(),": indexing geno")
+## dbGetQuery(db$con, "CREATE UNIQUE INDEX on geno(chr, bin, sample)")
 
 rm(db)
 message(Sys.time(),": Done.")
