@@ -44,3 +44,9 @@ read.conf <- function(fname) {
 check.conf <- function(name) {
   grepl('^TRUE\\b|^T\\b|^1\\b|^YES\\b|^Y\\b', Sys.getenv(name), ignore.case = TRUE, perl=TRUE)
 }
+
+# create a table named 'env' that contains the name/value pairs in vals
+store.conf <- function(db, vals, tname='env') {
+    df <- tibble(nm=names(vals), val=as.character(vals))
+    dbWriteTable(db$con, tname, df)
+}

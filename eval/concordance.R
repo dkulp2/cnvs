@@ -12,8 +12,9 @@ library(magrittr)
 library(zoo)
 library(RPostgreSQL)
 
-load("/Cygwin64/home/dkulp/data/SFARI.19May2017/segments.Rdata")
-load("/Cygwin64/home/dkulp/data/SFARI.15May2017/segments.Rdata")
+#load("/Cygwin64/home/dkulp/data/SFARI.19May2017/segments.Rdata")
+#load("/Cygwin64/home/dkulp/data/SFARI.15May2017/segments.Rdata")
+load("/Cygwin64/home/dkulp/data/SFARI.26May2017_24bin/segments.Rdata")
 
 MIN.OVLP.LEN <- 1400
 sapply(segs.group, function(df) {
@@ -32,7 +33,7 @@ print(ggplot(filter(sa2, len>MIN.OVLP.LEN), aes(x=old.start, xend=old.end, y=fam
         geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",MIN.OVLP.LEN)))
 
 print(ggplot(filter(sa2, len>1e5 & concordant), aes(x=old.start, xend=old.end, y=fam, yend=fam, color=len)) + scale_colour_gradient(high = "red", low = "orange") +
-        geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",MIN.OVLP.LEN)))
+        geom_segment(size=2) + geom_point() + facet_grid(concordant~.)+ ggtitle(sprintf("Sites By Concordancy (T,F,NA)\nInterval > %s nt",1e5)))
 
 # xlm <- xlim(0.1584e7, 0.1591e7)
 # xlm <- xlim(2.949e7, 2.951e7)
@@ -132,7 +133,7 @@ all.cts <- mutate(cts(segs), family='ALL', grp='All')
 ggplot(filter(all.cts, cnv == 'DEL'), aes(x=len.min, y=conc.cnv.pct)) + geom_point() + geom_line() + geom_vline(xintercept = 12, linetype=2) + xlim(0,50)+ylim(0.8,1) + ggtitle("Posterior, No Prior N=1")
 ggplot(filter(all.cts), aes(x=len.min, y=conc.cnv.pct, color=cnv)) + geom_point() + geom_line() + geom_vline(xintercept = 12, linetype=2) + xlim(0,50) + ggtitle("Concordancy By CNV Type")
 
-all.cts <- mutate(all.cts, is.cnv = cnv %in% c('BI','DEL','MULTI'), is.wt=='WT') # is.wt is NA for cnv==NA, but is.cnv is not
+all.cts <- mutate(all.cts, is.cnv = cnv %in% c('BI','DEL','MULTI'), is.wt=cnv=='WT') # is.wt is NA for cnv==NA, but is.cnv is not
 
 cts.wt <- ddply(all.cts, .(is.wt, len.min), summarize, tot.bases=sum(tot.bases), conc.bases=sum(conc.bases), 
                 ncnv=sum(ncnv), conc.cnv=sum(conc.cnv), cnv.base.pct=conc.bases/tot.bases, conc.cnv.pct=conc.cnv/ncnv)
