@@ -98,7 +98,7 @@ if [ ! -f ${CNV_SEG_SITES_FILE}.csm.Rdata ]; then
 	bgzip -f ${CNV_SEG_SITES_FILE}.cnvgeno.srt
 #	tabix -b 2 -e 3 -s 1 -S 1 ${CNV_SEG_SITES_FILE}.cnvgeno.srt.gz
 	echo `date +"%F %T"` Loading genotypes to database
-	sql ${THISDIR}loadGeno.sql
+	sql ${THISDIR}/loadGeno.sql
     fi
 
 
