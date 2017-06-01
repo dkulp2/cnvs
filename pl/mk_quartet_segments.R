@@ -22,7 +22,7 @@ library(plyr)
 library(dplyr)
 library(RPostgreSQL)
 
-profile.segment.cache.fn <- paste0(Sys.getenv('TMPDIR'),"profile_segments.Rdata")
+profile.segment.cache.fn <- paste0(Sys.getenv('TMPDIR'),"/profile_segments.Rdata")
 
 cmd.args <- commandArgs(trailingOnly = TRUE)
 # Sys.setenv(PGHOST="localhost",PGUSER="dkulp",PGDATABASE="seq", PGOPTIONS="--search_path=data_sfari_batch1c_19may2017")
