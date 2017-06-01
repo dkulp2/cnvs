@@ -28,7 +28,7 @@ if [ -f ${gsdelFile} -a -f ${gscnvFile} ]; then
 fi
 
 psql -a <<EOF
-CREATE SCHEMA IF NOT EXISTS ${MIGRATION_SCHEMA}
-CREATE VIEW ${MIGRATION_SCHEMA}.profile_segment AS SELECT * FROM profile_segment;
-CREATE VIEW ${MIGRATION_SCHEMA}.profile_counts AS SELECT * FROM profile_counts;
+CREATE SCHEMA IF NOT EXISTS ${LABEL};
+CREATE OR REPLACE VIEW ${LABEL}.profile_segment AS SELECT * FROM ${MIGRATION_SCHEMA}.profile_segment;
+CREATE OR REPLACE VIEW ${LABEL}.profile_counts AS SELECT * FROM ${MIGRATION_SCHEMA}.profile_counts;
 EOF
