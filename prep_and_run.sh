@@ -5,7 +5,7 @@
 #
 # Runs on the A quartet. Uncomment prep or cpPrep depending on circumstance
 
-set -eu
+set -eux
 
 echo ====================
 date
@@ -17,8 +17,11 @@ LQ=`echo $1 | tr '[:upper:]' '[:lower:]'`
 export QUARTET_DIR=/humgen/cnp04/bobh/projects/segmentation/sfari/data_sfari_batch1${1}
 echo QUARTET_DIR=${QUARTET_DIR}
 
+OLDTAG=26May2017_24bin
+time sh prep/cpPrep.sh data_sfari_batch1${LQ}_${OLDTAG} ~/data/out/${OLDTAG}/data_sfari_batch1${1}_${OLDTAG}/B24.L5.Q13.W10.PB0.7.ML1e7
 time sh prep/prep.sh
-# time sh prep/cpPrep.sh data_sfari_batch1${1}_11apr2017b ~/data/out/11Apr2017/data_sfari_batch1${1}_11Apr2017b/data_sfari_batch1${LQ}_11apr2017b
 time sh pl/cnv_seg.sh
+
+
 
 
