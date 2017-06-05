@@ -1,7 +1,9 @@
 # create a table containing the samples in each family quartet
 
-library(dplyr)
 library(RPostgreSQL)
+library(plyr)
+library(dplyr)
+Sys.setenv(PGOPTIONS="--search_path=data_sfari_batch1")
 db <- src_postgres()
 
 ped.fn <- '/humgen/cnp04/bobh/projects/locus_SMN/cohort_sfari/sample_pedigrees.ped'
