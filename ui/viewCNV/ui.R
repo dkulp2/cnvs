@@ -86,7 +86,8 @@ shinyUI(fluidPage(
 		       conditionalPanel("input.show_cnv", checkboxInput("show_wildtype","Show WildType (CN=2) Extents", value=FALSE),
                                                           checkboxInput("show_basic","Show Basic Extents", value=TRUE))
                        ),
-      checkboxInput("show_table","Show Profile Data as Table", value=FALSE)
+      checkboxInput("show_table","Show Profile Data as Table", value=FALSE),
+      selectInput("schema","Schema", c('sfari_26May2017_24bin','sfari_19May2017','sfari_01jun2017_24bin'))
     ),
     
     # Show a plot of the generated distribution

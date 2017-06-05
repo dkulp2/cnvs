@@ -32,10 +32,6 @@ read.conf("env.txt")  # pre-computed environment vars. Rerun setup.R to regenera
 tmp.dir <- Sys.getenv(("TMPDIR"))
 input.dump.fn <- Sys.getenv("INPUT_DUMP")
 
-# connection determined by environment variables
-db <- src_postgres()
-message(db)
-
 # Flags to enable different components
 USE_IRS <- check.conf("USE_IRS")
 USE_KNOWNS <- check.conf("USE_KNOWNS")
@@ -43,57 +39,83 @@ USE_QUARTETS <- check.conf("USE_QUARTETS")
 
 if (USE_IRS) {
   # indata.dir is where the original inputs live. 
-  indata.dir <- paste0(data.dir,"/../../gpc_wave2_batch1")  # FIXME
+  indata.dir <<- paste0(data.dir,"/../../gpc_wave2_batch1")  # FIXME
 
-  irs.fn <- paste0(indata.dir,"/cnv_segs.irs")
+  irs.fn <<- paste0(indata.dir,"/cnv_segs.irs")
   probe.fn <- paste0(indata.dir,"/probes.txt")
 
-  irs.orig <- read.table(irs.fn,header=T,sep="\t", as.is=T)
-  colnames(irs.orig) <- c('seg','chr','start','end','Pval','nprobes','# Samples','Lower Pval','Lower # Samples','Higher Pval', 'Higher # Samples')
+  irs.orig <<- read.table(irs.fn,header=T,sep="\t", as.is=T)
+  colnames(irs.orig) <<- c('seg','chr','start','end','Pval','nprobes','# Samples','Lower Pval','Lower # Samples','Higher Pval', 'Higher # Samples')
   cat(sprintf("Loaded %s IRS rows from %s\n", nrow(irs.orig),irs.fn))
 
-  probes.orig <- read.table(probe.fn)
-  colnames(probes.orig) <- c('seg','chr','start.map','end.map')
+  probes.orig <<- read.table(probe.fn)
+  colnames(probes.orig) <<- c('seg','chr','start.map','end.map')
   cat(sprintf("Loaded %s probes from %s\n",nrow(probes.orig),probe.fn))
 }
 
 # KNOWNS
 if (USE_KNOWNS) {
   # DEL pipeline only for Sn
-  gs_dels.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
+  gs_dels.fn <<- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
 
   # DEL pipeline — only sampleseg with most readpair evidence
-  gs_dels_best.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_best.genotypes.txt") # filtered, highest read pair
+  gs_dels_best.fn <<- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_best.genotypes.txt") # filtered, highest read pair
 
   # More generous set for Sp
-  gs_cnvdels_flat.fn <- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
+  gs_cnvdels_flat.fn <<- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
 }
 
-# NOTES - contains "bookmarks" of loci with corresponding notes
-if (dbExistsTable(db$con, "notes")) {
-  notes <- tbl(db, 'notes') %>% collect
-  message("notes exists")
-} else {
-  notes <- data.frame()
-  message("new blank notes")
+# FIXME: these are literally global across sessions, so customizing these values in a session
+# will pollute other sessions. Make db a reactive that's dependent on schema, etc.
+init.globals <- function(schema.name) {
+  # connection determined by environment variables
+  db <<- src_postgres()
+  message(Sys.time(), ": init.globals: ",db)
+
+  dbGetQuery(db$con, sprintf("set search_path=%s", schema.name))
+  message(Sys.time(), sprintf(": init.globals: schema is %s", schema.name))
+
+  # env table contains parameters used in this run
+  env <<- tbl(db,'env') %>% collect
+
+  # TODO: move the values read from env.txt here
+
+  scan.win.size <<- as.numeric(filter(env, nm=='NBINS')[['val']])
+  message(Sys.time(), sprintf(": init.globals: scan.win.size=%s",scan.win.size))
+
+  # NOTES - contains "bookmarks" of loci with corresponding notes
+  if (dbExistsTable(db$con, "notes")) {
+    notes <<- tbl(db, 'notes') %>% collect
+    message(Sys.time(),": init.globals: notes exists")
+  } else {
+    notes <<- data.frame()
+    message(Sys.time(),": init.globals: new blank notes")
+  }
+
+
+  cnv.mrg <<- tbl(db, "cnv_mrg") %>% collect %>% mutate(method='Basic')
+  cnv.mle <<- tbl(db, "cnv_mle") %>% collect %>% mutate(method='MLE')
+  cnv.post <<- tbl(db, "cnv_post") %>% collect %>% mutate(method='Bayes')
+
+  message(Sys.time(), sprintf(": init.globals: Read %s Basic, %s MLE and %s Bayes rows", nrow(cnv.mrg), nrow(cnv.mle), nrow(cnv.post)))
+
+  geno <<- tbl(db, "geno")
+  profile.segments <<- tbl(db, "profile_segment")
+  profile.counts <<- tbl(db, "profile_counts")
+  message(Sys.time(), sprintf(": init.globals: Rebound geno, profile.segments, profile.counts"))
+
+
+  quartets <<- tbl(db, "quartets") %>% collect
+  message(Sys.time(),sprintf(": init.globals: Read %s samples into family table\n", nrow(quartets)))
+
+  # look up family ID with families[sample,]$family
+  families <<-  melt(select(quartets, -sib1.gender, -sib2.gender), 'family')
+  rownames(families) <<- families$value
 }
 
+env.schema <- strsplit((Sys.getenv('PGOPTIONS')),'=',fixed=TRUE)[[1]][2]
 
-cnv.mrg <- tbl(db, "cnv_mrg") %>% collect %>% mutate(method='Basic')
-cnv.mle <- tbl(db, "cnv_mle") %>% collect %>% mutate(method='MLE')
-cnv.post <- tbl(db, "cnv_post") %>% collect %>% mutate(method='Bayes')
-
-
-geno <- tbl(db, "geno")
-profile.segments <- tbl(db, "profile_segment")
-profile.counts <- tbl(db, "profile_counts")
-
-quartets <- tbl(db, "quartets") %>% collect
-cat(sprintf("Read %s samples into family table\n", nrow(quartets)))
-
-# look up family ID with families[sample,]$family
-families <-  melt(select(quartets, -sib1.gender, -sib2.gender), 'family')
-rownames(families) <- families$value
+init.globals(env.schema)
 
 # common colors for copy number
 cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#c51b7d", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999",'NA'='#333333'), 
@@ -111,8 +133,22 @@ family.label <- function(sample) {
 # Define server logic required to draw a histogram
 shinyServer(function(input, output, session) {
   
+  observe({
+    message(Sys.time(),": observe input$schema: Calling init.globals")
+    init.globals(input$schema)
+
+    message(Sys.time(),": observe input$schema: requesting updated predicted deletions")
+    updateSelectInput(session, 'predicted', choices=c("Choose Predicted Deletion"="",pred.deletions()))
+
+    message(Sys.time(), sprintf(": observe input$schema: updating win.size (%s), seg.sample, saved.site", scan.win.size))
+    updateSliderInput(session, "win.size", value=scan.win.size)
+    updateSelectizeInput(session, 'seg.sample', choices=unique(cnv.mrg$.id))
+    updateSelectInput(session, 'saved.site', choices=c("Choose Preset"='',notes$name))
+  })
+
   pred.deletions <- reactive({
-    message('pred.deletions:',Sys.time())
+    input$schema
+    message(Sys.time(), ': pred.deletions')
     if (input$pred.order == 'chrom') {
       cn.segs.basic <- arrange(cnv.mrg, start.map)
     } else if (input$pred.order == 'desc') {
@@ -554,7 +590,7 @@ shinyServer(function(input, output, session) {
                      bin >= start.bin & bin <= end.bin) 
     
       message('frags join:',Sys.time())
-      f <- inner_join(pc %>% collect, get.profile.segments(), by = c("chrom", "bin"))
+      f <- inner_join(pc %>% collect(n=Inf), get.profile.segments(), by = c("chrom", "bin"))
     
       f$sample.type <- factor(ifelse(f$sample %in% 
                                        input$seg.sample, "target", "other"))
@@ -573,7 +609,7 @@ shinyServer(function(input, output, session) {
     else {
       start.bin <- min(get.profile.segments()$bin)
       end.bin <- max(get.profile.segments()$bin)
-      g <- mutate(filter(geno, chr == input$seg.chr & bin >= start.bin & bin <= end.bin & sample %in% c("", input$seg.sample)), bin = bin + 6)
+      g <- mutate(filter(geno, chr == input$seg.chr & bin >= start.bin & bin <= end.bin & sample %in% c("", input$seg.sample)), bin = bin + scan.win.size/2)
       print(head(g))
 
       # 21Mar17 - query is too slow over all 400 samples
