@@ -1,3 +1,10 @@
+# The shiny server log files don't seem to be reliably writing to 
+# /home/unix/dkulp/bobh/shiny/var/log/shiny-server
+# so I just redirect all output to my own file!
+zz <- file("/tmp/dkulp.shiny.log", open = "at")
+sink(zz)
+sink(zz, type = "message")
+
 library(shiny)
 library(plyr)
 library(dplyr)
@@ -16,6 +23,7 @@ library(reshape2)
 # Some hard-coded constants
 pad <- 5000  # add pad bases to L and R of target region
 too.big <- 500000  # don't retrieve big data when window is larger than too.big
+too.many <- 10000  # don't retrieve more than too.many rows for client side table display
 
 source("../../conf/config.R")
 read.conf("env.txt")  # pre-computed environment vars. Rerun setup.R to regenerate.
@@ -24,9 +32,6 @@ read.conf("env.txt")  # pre-computed environment vars. Rerun setup.R to regenera
 tmp.dir <- Sys.getenv(("TMPDIR"))
 input.dump.fn <- Sys.getenv("INPUT_DUMP")
 
-# connection determined by environment variables
-db <- src_postgres()
-
 # Flags to enable different components
 USE_IRS <- check.conf("USE_IRS")
 USE_KNOWNS <- check.conf("USE_KNOWNS")
@@ -34,55 +39,116 @@ USE_QUARTETS <- check.conf("USE_QUARTETS")
 
 if (USE_IRS) {
   # indata.dir is where the original inputs live. 
-  indata.dir <- paste0(data.dir,"/../../gpc_wave2_batch1")  # FIXME
-  
-  irs.fn <- paste0(indata.dir,"/cnv_segs.irs")
+  indata.dir <<- paste0(data.dir,"/../../gpc_wave2_batch1")  # FIXME
+
+  irs.fn <<- paste0(indata.dir,"/cnv_segs.irs")
   probe.fn <- paste0(indata.dir,"/probes.txt")
 
-  irs.orig <- read.table(irs.fn,header=T,sep="\t", as.is=T)
-  colnames(irs.orig) <- c('seg','chr','start','end','Pval','nprobes','# Samples','Lower Pval','Lower # Samples','Higher Pval', 'Higher # Samples')
+  irs.orig <<- read.table(irs.fn,header=T,sep="\t", as.is=T)
+  colnames(irs.orig) <<- c('seg','chr','start','end','Pval','nprobes','# Samples','Lower Pval','Lower # Samples','Higher Pval', 'Higher # Samples')
   cat(sprintf("Loaded %s IRS rows from %s\n", nrow(irs.orig),irs.fn))
-  
-  probes.orig <- read.table(probe.fn)
-  colnames(probes.orig) <- c('seg','chr','start.map','end.map')
+
+  probes.orig <<- read.table(probe.fn)
+  colnames(probes.orig) <<- c('seg','chr','start.map','end.map')
   cat(sprintf("Loaded %s probes from %s\n",nrow(probes.orig),probe.fn))
 }
 
 # KNOWNS
 if (USE_KNOWNS) {
   # DEL pipeline only for Sn
-  gs_dels.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
-  
+  gs_dels.fn <<- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_flt.genotypes.txt") # flattened, filtered
+
   # DEL pipeline — only sampleseg with most readpair evidence
-  gs_dels_best.fn <- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_best.genotypes.txt") # filtered, highest read pair
-  
+  gs_dels_best.fn <<- paste0(data.dir,"/../../gpc_wave2_batch1/gs_dels_best.genotypes.txt") # filtered, highest read pair
+
   # More generous set for Sp
-  gs_cnvdels_flat.fn <- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
+  gs_cnvdels_flat.fn <<- paste0(data.dir,"/../../gpc_wave2/gs_cnv_del_flt.genotypes.txt")
 }
 
-# NOTES - contains "bookmarks" of loci with corresponding notes
-if (dbExistsTable(db$con, "notes")) {
-  notes <- tbl(db, 'notes') %>% collect
-} else {
-  notes <- data.frame()
+# FIXME: these are literally global across sessions, so customizing these values in a session
+# will pollute other sessions. Make db a reactive that's dependent on schema, etc.
+init.globals <- function(schema.name) {
+  # connection determined by environment variables
+  db <<- src_postgres()
+  message(Sys.time(), ": init.globals: ",db)
+
+  dbGetQuery(db$con, sprintf("set search_path=%s", schema.name))
+  message(Sys.time(), sprintf(": init.globals: schema is %s", schema.name))
+
+  # env table contains parameters used in this run
+  env <<- tbl(db,'env') %>% collect
+
+  # TODO: move the values read from env.txt here
+
+  scan.win.size <<- as.numeric(filter(env, nm=='NBINS')[['val']])
+  message(Sys.time(), sprintf(": init.globals: scan.win.size=%s",scan.win.size))
+
+  # NOTES - contains "bookmarks" of loci with corresponding notes
+  if (dbExistsTable(db$con, "notes")) {
+    notes <<- tbl(db, 'notes') %>% collect
+    message(Sys.time(),": init.globals: notes exists")
+  } else {
+    notes <<- data.frame()
+    message(Sys.time(),": init.globals: new blank notes")
+  }
+
+
+  cnv.mrg <<- tbl(db, "cnv_mrg") %>% collect %>% mutate(method='Basic')
+  cnv.mle <<- tbl(db, "cnv_mle") %>% collect %>% mutate(method='MLE')
+  cnv.post <<- tbl(db, "cnv_post") %>% collect %>% mutate(method='Bayes')
+
+  message(Sys.time(), sprintf(": init.globals: Read %s Basic, %s MLE and %s Bayes rows", nrow(cnv.mrg), nrow(cnv.mle), nrow(cnv.post)))
+
+  geno <<- tbl(db, "geno")
+  profile.segments <<- tbl(db, "profile_segment")
+  profile.counts <<- tbl(db, "profile_counts")
+  message(Sys.time(), sprintf(": init.globals: Rebound geno, profile.segments, profile.counts"))
+
+
+  quartets <<- tbl(db, "quartets") %>% collect
+  message(Sys.time(),sprintf(": init.globals: Read %s samples into family table\n", nrow(quartets)))
+
+  # look up family ID with families[sample,]$family
+  families <<-  melt(select(quartets, -sib1.gender, -sib2.gender), 'family')
+  rownames(families) <<- families$value
 }
+
+env.schema <- strsplit((Sys.getenv('PGOPTIONS')),'=',fixed=TRUE)[[1]][2]
+
+init.globals(env.schema)
 
 # common colors for copy number
-cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#c51b7d", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999"), 
+cn.colors <- scale_color_manual(values=c('0'="#7fc97f", '1'="#c51b7d", '2'="#fdc086", '3'="#ffff99", '4'="#386cb0", '5+'="#f0027f",'Disc'="#999999",'NA'='#333333'), 
                                 name="CN")
 
-cnv.mrg <- tbl(db, "cnv_mrg") %>% collect %>% mutate(method='Basic')
-cnv.mle <- tbl(db, "cnv_mle") %>% collect %>% mutate(method='MLE')
-cnv.post <- tbl(db, "cnv_post") %>% collect %>% mutate(method='Bayes')
+# max out CN at 5. Set fixed levels and labels for fixed legend
+cn.label <- function(cn) {
+  factor(ifelse(cn==99, cn, ifelse(cn > 5, 5, cn)), levels=c('0','1','2','3','4','5','99'), labels=c('0','1','2','3','4','5+','Disc'))
+}
 
-geno <- tbl(db, "geno")
-profile.segments <- tbl(db, "profile_segment")
-profile.counts <- tbl(db, "profile_counts")
+family.label <- function(sample) {
+  as.factor(families[sample,]$family)
+}
 
 # Define server logic required to draw a histogram
 shinyServer(function(input, output, session) {
   
+  observe({
+    message(Sys.time(),": observe input$schema: Calling init.globals")
+    init.globals(input$schema)
+
+    message(Sys.time(),": observe input$schema: requesting updated predicted deletions")
+    updateSelectInput(session, 'predicted', choices=c("Choose Predicted Deletion"="",pred.deletions()))
+
+    message(Sys.time(), sprintf(": observe input$schema: updating win.size (%s), seg.sample, saved.site", scan.win.size))
+    updateSliderInput(session, "win.size", value=scan.win.size)
+    updateSelectizeInput(session, 'seg.sample', choices=unique(cnv.mrg$.id))
+    updateSelectInput(session, 'saved.site', choices=c("Choose Preset"='',notes$name))
+  })
+
   pred.deletions <- reactive({
+    input$schema
+    message(Sys.time(), ': pred.deletions')
     if (input$pred.order == 'chrom') {
       cn.segs.basic <- arrange(cnv.mrg, start.map)
     } else if (input$pred.order == 'desc') {
@@ -90,7 +156,7 @@ shinyServer(function(input, output, session) {
     } else if (input$pred.order == 'asc') {
       cn.segs.basic <- arrange(cnv.mrg, (end.map-start.map))
     }
-    cn.segs.basic$labels <- sprintf("%s: %s (%s)", seq(1,nrow(cn.segs.basic)), cn.segs.basic$seg, cn.segs.basic$end.map-cn.segs.basic$start.map)
+    cn.segs.basic$labels <- sprintf("%s: %s (%s,%s)", seq(1,nrow(cn.segs.basic)), cn.segs.basic$seg, cn.segs.basic$end.map-cn.segs.basic$start.map, cn.segs.basic$end.bin-cn.segs.basic$start.bin+1)
     if (input$pred.cn==0) {
       x <- subset(cn.segs.basic, cn==0)
     } else if (input$pred.cn==1) {
@@ -102,21 +168,24 @@ shinyServer(function(input, output, session) {
     } else {
       x <- subset(cn.segs.basic, cn>2)
     }
-    segs <- x$seg
-    names(segs) <- x$labels
+    x2 <- subset(x, end.bin-start.bin >= input$min.cnv.len)
+    segs <- x2$seg
+    names(segs) <- x2$labels
     return(segs)
   })
 
-  # # load the selection options for predicted sites
+  # load the selection options for predicted sites
   observe({
     updateSelectInput(session, 'predicted', choices=c("Choose Predicted Deletion"="",pred.deletions()))
   })
   
   # load the selection options for saved sites
-  updateSelectInput(session, 'saved.site', choices=c("Choose Preset"='',notes$name))
+#  updateSelectInput(session, 'saved.site', choices=c("Choose Preset"='',notes$name))
+  updateSelectInput(session, 'saved.site', choices=c("Choose Preset"='','A','B'))
   
   if (USE_KNOWNS) {
     gs.dels.orig <- reactive({
+      message('  gs.dels.orig:',Sys.time())
       if (input$truth_data == 'GStrip Sn DEL Data') {
         gdo.fn <- gs_dels.fn
       } else if (input$truth_data == 'GStrip Sn Best DEL Data') {
@@ -126,7 +195,7 @@ shinyServer(function(input, output, session) {
       }
       gdo <- read.table(gdo.fn, header=TRUE, sep="\t", stringsAsFactors = FALSE)
       cat(sprintf("Loaded %s known deletions from %s\n", nrow(gdo),gdo.fn))
-      
+    
       colnames(gdo) <- c('.id','seg','chr','start.map','end.map','cn','cq','paired.reads')
       gdo$evidence <- ' Known'
       gdo$copy.number <- addNA(as.factor(gdo$cn))
@@ -153,7 +222,7 @@ shinyServer(function(input, output, session) {
         updateSelectizeInput(session, 'seg.sample', selected=seg.sample)
       }
     })
-    
+  
     # prev candidate
     observe({
       input$candidate.prev
@@ -161,7 +230,7 @@ shinyServer(function(input, output, session) {
       idx <- which(candidates == isolate(input$candidate))
       if (length(idx)>0 && idx > 1) { updateSelectInput(session,'candidate',selected=candidates[idx-1]) }
     })
-    
+  
     # next candidate
     observe({
       input$candidate.next
@@ -175,24 +244,60 @@ shinyServer(function(input, output, session) {
     # load the values for all sample names
     updateSelectizeInput(session, 'seg.sample', choices=unique(cnv.mrg$.id))
   })
+
+  observe({
+    input$add_quartet
+    cat("Add quartet\n")
+    isolate({
+      if (!is.null(input$seg.sample)) {
+        qt <- filter(quartets, sib1 %in% c('',input$seg.sample) | sib2 %in% c('',input$seg.sample) | father %in% c('',input$seg.sample) | mother %in% c('',input$seg.sample))
+        new.samples <- c(qt$sib1, qt$sib2, qt$father, qt$mother)
+        cat(sprintf("Sample: %s\n", new.samples))
+        updateSelectizeInput(session, 'seg.sample', selected=new.samples)
+      }
+    })
+  })
   
+
+  # common colors for the current selected set of samples
+  sample.colors <- reactive({
+    message('sample.colors:',Sys.time())
+    cols <- rainbow(length(input$seg.sample), s=0.5)
+    names(cols) <- sort(input$seg.sample)
+    print(cols)
+    scale_color_manual(name="Sample", values=cols)
+  })
+
+  # common colors for the current selected set of families
+  family.colors <- reactive({
+    message('family.colors:',Sys.time())
+    fams <- unique(family.label(input$seg.sample))
+    cols <- rainbow(length(fams), s=0.8)
+    names(cols) <- fams
+    print(cols)
+    scale_color_manual(name="Family",values=cols)
+  })
+
+
   # if the user selects a saved site, load those coords
   observe({
     input$reset
     input$saved.site
     isolate({
-      
+    
       if (input$saved.site != "") {
         note <- notes[notes$name == input$saved.site,]
         updateTextInput(session,'seg.chr', value=note$chr)
         updateNumericInput(session,'seg.start', value=note$start.map)
         updateNumericInput(session,'seg.end', value=note$end.map)
+        updateNumericInput(session,'bin.start', value=note$start.bin)
+        updateNumericInput(session,'bin.end', value=note$end.bin)
         updateSelectizeInput(session, 'seg.sample', selected=unlist(strsplit(note$sample,',',fixed=TRUE)))
-        
+      
         # must call special added hook to set value of textarea because there is no builtin R func
         session$sendCustomMessage(type = 'setnote', message = list(note = note$note))
       }
-      
+    
     })    
   })
   
@@ -212,7 +317,7 @@ shinyServer(function(input, output, session) {
   
   # if the predicted site changes, then set the samples, chromosome, start and end positions
   observe({
-    
+  
     if (input$predicted != "") {
       gs.row <- filter(cnv.mrg, seg == input$predicted & !is.na(cn))
       cat(sprintf("Found %s rows for prediction %s\n", nrow(gs.row), input$predicted))
@@ -221,9 +326,13 @@ shinyServer(function(input, output, session) {
       seg.chr <- gs.row$chr[1]
       seg.start <- gs.row$start.map[1]
       seg.end <- gs.row$end.map[1]
+      bin.start <- gs.row$start.bin[1]
+      bin.end <- gs.row$end.bin[1]
       updateTextInput(session,'seg.chr', value=seg.chr)
       updateNumericInput(session,'seg.start', value=seg.start)
       updateNumericInput(session,'seg.end', value=seg.end)
+      updateNumericInput(session,'bin.start', value=bin.start)
+      updateNumericInput(session,'bin.end', value=bin.end)
       updateSelectizeInput(session, 'seg.sample', selected=seg.sample)
     }
   })
@@ -266,7 +375,56 @@ shinyServer(function(input, output, session) {
       updateNumericInput(session,'seg.end', value=isolate(input$seg.end + incr))
     })
   })
+
+  # allow update of bin or genomic position
+  observe({
+    # genomic => bin
+    input$seg.start
+    isolate({
+      message(Sys.time(),sprintf(": Update start bin for pos %s",input$seg.start))
+      ps.start <- filter(profile.segments, chrom==input$seg.chr & start_pos <= input$seg.start & end_pos >= input$seg.start) %>% collect
+      if (!is.na(input$seg.start) && !empty(ps.start) && input$bin.start != ps.start$bin) {
+        message(Sys.time(),sprintf(" Updating bin.start <= %s",ps.start$bin))
+        updateNumericInput(session,'bin.start', value=ps.start$bin)
+      }
+    })
+  })
+
+  observe({
+    input$seg.end
+    isolate({
+      message(Sys.time(),sprintf(": Update end bin for pos %s",input$seg.end))
+      ps.end <- filter(profile.segments, chrom==input$seg.chr & start_pos <= input$seg.end & end_pos >= input$seg.end) %>% collect
+      if (!is.na(input$seg.start) && !empty(ps.end) && input$bin.end != ps.end$bin) {
+        updateNumericInput(session,'bin.end', value=ps.end$bin)
+      }
+    })
+  })
   
+  observe({
+    # bin => genomic
+    input$bin.go
+    isolate({
+      message(Sys.time(),sprintf(": Update genomic seg.start for bin %s",input$bin.start))
+      ps.start <- filter(profile.segments, chrom==input$seg.chr & bin==input$bin.start) %>% collect
+      if (!empty(ps.start)) {
+        message(Sys.time(),sprintf(" Updating seg.start <= %s",ps.start$start_pos))
+        updateNumericInput(session,'seg.start', value=ps.start$start_pos)
+      }
+    })
+  })
+
+  observe({
+    # bin => genomic
+    input$bin.go
+    isolate({
+      message(Sys.time(),sprintf(": Update genomic seg.end for bin %s",input$bin.end))
+      ps.end <- filter(profile.segments, chrom==input$seg.chr & bin==input$bin.end) %>% collect
+      if (!empty(ps.end))
+        updateNumericInput(session,'seg.end', value=ps.end$end_pos)
+    })
+  })
+
   observe({
     input$delete
     cat("Delete Note\n")
@@ -291,7 +449,7 @@ shinyServer(function(input, output, session) {
                              format((input$seg.end-input$seg.start)/1000,digits=4,nsmall=2),
                              regmatches(input$note, regexpr("[^\n]{1,50}",input$note,perl=TRUE)))
         new.note <- tibble(name=note.name, chr=input$seg.chr, start.map=input$seg.start, end.map=input$seg.end,
-                           sample=paste(input$seg.sample,collapse=','),note=input$note)
+                           sample=paste(input$seg.sample,collapse=','),note=input$note, start.bin=input$bin.start, end.bin=input$bin.end)
         if (nrow(notes)==0) { 
           notes <<- new.note 
         } else { 
@@ -309,25 +467,32 @@ shinyServer(function(input, output, session) {
     })
   })
   
+  # returns TRUE if no user input
+  no.pos <- reactive({
+    message('no.pos:',Sys.time())
+    is.null(input$bin.start) || is.null(input$bin.end) || is.null(input$seg.start) || is.null(input$seg.end) || is.null(input$seg.chr) || input$seg.start=="" || input$seg.end=="" || input$seg.chr==""
+  })
+
   region.filter <- function(cnv) {
     filter(cnv, (chr==input$seg.chr & end.map > input$seg.start-input$pad & start.map < input$seg.end+input$pad &
-                   (cn != 2 | input$show_wildtype) & end.map-start.map > input$min.cnv.len & !is.na(cn) &
+                   (cn != 2 | input$show_wildtype) & !is.na(cn) &
                    (!input$show_target_only | .id %in% input$seg.sample)))
   }
   
   # All the predicted extents. rbind the rows from different prediction stages 
   csm <- reactive({
+    message('csm:',Sys.time())
     cat("Loading cn.segs.merged...\n")
     csm.all <- data.frame()
-    
+  
     if (input$show_basic) {
       csm.all <- rbind(csm.all, select(region.filter(cnv.mrg), .id, cn, chr, start.map, end.map, label=seg, evidence=method))
     }
-    
+  
     if (input$show_extended_ML) {
       csm.all <- rbind(csm.all, select(region.filter(cnv.mle), .id, cn, chr, start.map, end.map, label, evidence=method))
     }
-    
+  
     if (input$show_bayes) {
       csm.all <- rbind(csm.all, select(region.filter(cnv.post), .id, cn, chr, start.map, end.map, label, evidence=method))
     }
@@ -342,17 +507,20 @@ shinyServer(function(input, output, session) {
   
   if (USE_IRS) {
     irs <- reactive({
+      message('  irs:',Sys.time())
       subset(irs.orig, chr==input$seg.chr & end > input$seg.start-input$pad & start < input$seg.end+input$pad & nprobes > 0)
     })
-    
+  
     probes <- reactive({
+      message('  probes:',Sys.time())
       subset(probes.orig, chr==input$seg.chr & end.map > input$seg.start-input$pad & start.map < input$seg.end+input$pad)
     })
   }
   
   if (USE_KNOWNS) {
     gs.dels <- reactive({
-      x <- subset(gs.dels.orig(), chr==input$seg.chr & end.map > input$seg.start-input$pad & start.map < input$seg.end+input$pad & paired.reads >= input$paired.reads)
+      message('  gs.dels:',Sys.time())
+      x <- subset(gs.dels.orig(), chr==input$seg.chr & end.map > input$seg.start-input$pad & start.map < input$seg.end+input$pad)
       x$target <- x$.id %in% input$seg.sample
       cat("gs.dels\n")
       print(head(x))
@@ -363,6 +531,7 @@ shinyServer(function(input, output, session) {
   
   # format gs.dels, cn.segs, probes, and irs into a single data.frame for ggplot
   cnv.disp <- reactive({
+    message('cnv.disp:',Sys.time())
     disp.cols <- c('.id','cn','chr','start.map','end.map','label', 'target', 'evidence')
     disp <- data.frame()
 
@@ -371,14 +540,14 @@ shinyServer(function(input, output, session) {
       gs.del.sel <- gs.dels[,c(disp.cols,'paired.reads')] 
       disp <- rbind(disp, gs.del.sel)
     }
-    
+  
     cn.segs <- csm()
     if (nrow(cn.segs) > 0) {
       cn.segs.sel <- cn.segs[,disp.cols]
       cn.segs.sel$paired.reads <- NA      
       disp <- rbind(disp, cn.segs.sel)
     } 
-    
+  
     if (USE_IRS) {
       irs <- irs()
       probes <- probes()
@@ -386,51 +555,52 @@ shinyServer(function(input, output, session) {
         disp <- rbind(disp, 
                       data.frame(.id='Probe',cn=NA,copy.number=NA,chr=probes$chr,start.map=probes$start.map,end.map=probes$end.map,seg=probes$seg,target=FALSE,evidence="Array",paired.reads=NA))
       } 
-      
+    
       disp <- join(disp, subset(irs, select=-c(chr,start,end)), by="seg", type="left")
       disp$Pval <- ifelse(is.na(disp$Pval),1,disp$Pval)
       disp$Phred <- ifelse(disp$Pval==0, 100, -log10(disp$Pval)*10)
     }
-    
-    # max out CN at 5. Set fixed levels and labels for fixed legend
-    disp$cn.disp <- factor(ifelse(disp$cn==99, disp$cn, ifelse(disp$cn > 5, 5, disp$cn)), levels=c('0','1','2','3','4','5','99'), labels=c('0','1','2','3','4','5+','Disc'))
-    
+  
+    disp$cn.disp <- cn.label(disp$cn)
+  
     save(disp,file=sprintf('%s/disp.Rdata',tmp.dir))
     return(disp)
   })
   
   get.profile.segments <- reactive({
+    message('get.profile.segments:',Sys.time())
     x <- filter(profile.segments, chrom == input$seg.chr & start_pos > 
                   input$seg.start - input$pad & end_pos < input$seg.end + 
                   input$pad) %>% select(bin, chrom, start_pos, end_pos) %>% collect
   })
   
   frags <- reactive({
-    if (input$seg.end - input$seg.start > too.big) {
-      cat(sprintf("Skipping profile - region too big %s > %s", 
+    message('frags:',Sys.time())
+    if (is.null(input$seg.end) || is.null(input$seg.start) || input$seg.end - input$seg.start > too.big) {
+      cat(sprintf("Skipping profile - input missing or region too big %s > %s", 
                   input$seg.end - input$seg.start, too.big))
       f <- data.frame()
     }
     else {
       start.bin <- min(get.profile.segments()$bin)
       end.bin <- max(get.profile.segments()$bin)
-      
+    
+      message('frags filter:',Sys.time())
       pc <- filter(profile.counts, chrom == input$seg.chr & 
                      bin >= start.bin & bin <= end.bin) 
-      
-      if (input$show_target_frag_only) {
-        pc <- filter(pc, sample %in% c("", input$seg.sample))
-      }
-
-      f <- inner_join(pc %>% collect, get.profile.segments(), by = c("chrom", "bin"))
-      
+    
+      message('frags join:',Sys.time())
+      f <- inner_join(pc %>% collect(n=Inf), get.profile.segments(), by = c("chrom", "bin"))
+    
       f$sample.type <- factor(ifelse(f$sample %in% 
                                        input$seg.sample, "target", "other"))
     }
+
     f
   })
   
   get.geno <- reactive({
+    message('get.geno:',Sys.time())
     if (input$seg.end - input$seg.start > too.big) {
       cat(sprintf("Skipping profile - region too big %s > %s", 
                   input$seg.end - input$seg.start, too.big))
@@ -439,18 +609,23 @@ shinyServer(function(input, output, session) {
     else {
       start.bin <- min(get.profile.segments()$bin)
       end.bin <- max(get.profile.segments()$bin)
-      g <- mutate(filter(geno, chr == input$seg.chr & bin >= start.bin & bin <= end.bin), bin = bin + 6)
-      if (input$show_target_frag_only) {
-        return(g %>% filter(sample %in% c("", input$seg.sample)))
-      }
-      else {
+      g <- mutate(filter(geno, chr == input$seg.chr & bin >= start.bin & bin <= end.bin & sample %in% c("", input$seg.sample)), bin = bin + scan.win.size/2)
+      print(head(g))
+
+      # 21Mar17 - query is too slow over all 400 samples
+      # If I put this back then need to pull the random background samples out to be used here, too
+      # if (input$show_target_frag_only) {
+      #   return(g %>% filter(sample %in% c("", input$seg.sample)))
+      # }
+      # else {
         return(g)
-      }
+      # }
     }
   })
   
   # breakpoint log likelihoods
   bkpts.ll <- reactive({
+    message('bkpts.ll:',Sys.time())
     if (input$seg.end-input$seg.start > too.big) {
       cat(sprintf("Skipping profile - region too big %s > %s", input$seg.end-input$seg.start, too.big))
       bkpts <- data.frame(sample=character(0), start_pos=integer(0), end_pos=integer(0), bkpt_ll=numeric(0), no_bkpt_ll=numeric(0))
@@ -462,7 +637,7 @@ shinyServer(function(input, output, session) {
           dbGetQuery(db$con, sprintf("SELECT b.sample, ps.start_pos, ps.end_pos, loss_ll, gain_ll, any_ll, no_bkpt_ll FROM bkpt b, profile_segment ps WHERE b.sample='%s' AND ps.chrom='%s' AND ps.start_pos < %s AND ps.end_pos > %s AND b.chr = ps.chrom AND b.bkpt_bin = ps.bin", 
                                      sample, input$seg.chr, input$seg.end+input$pad, input$seg.start-input$pad))
       })
-      
+    
       # # db values are p(x|gain,loss,nc). Turn into p(gain,loss,nc|x) = p(x|gain,loss,nc)p(gain,loss,nc) and normalize
       # # p(gain) = p(loss) = 6/16. p(nc) = 4/16. Assuming 4 levels of CN from staircase.R.
       # bkpts <- mutate(mutate(bkpts, loss = 6/16. * 10^-loss_ll, gain= 6/16. * 10^-gain_ll, any=12/16.*10^-any_ll,
@@ -471,7 +646,7 @@ shinyServer(function(input, output, session) {
       #                 loss=loss/tot, gain=gain/tot, any=any/tot, no_bkpt=no_bkpt/tot,
       #                 Lloss=-log10(loss), Lgain=-log10(gain), Lany=-log10(any), Lno_bkpt=-log10(no_bkpt),
       #                 Lno_loss=-log10(gain+no_bkpt), Lno_gain=-log10(loss+no_bkpt))
-      
+    
       bkpts <- mutate(bkpts,
                       loss=10^-loss_ll, 
                       gain=10^-gain_ll, 
@@ -495,6 +670,7 @@ shinyServer(function(input, output, session) {
   
   # observed/expected ratio
   oer <- reactive({
+    message('oer:',Sys.time())
     f <- frags()
     oer <-
       mutate(ddply(f, .(sample), mutate, 
@@ -502,11 +678,11 @@ shinyServer(function(input, output, session) {
                    exp=c(rep(NA,input$win.size/2), rollapply(expected, width=input$win.size, sum), rep(NA,(input$win.size/2-1)))),
              obs_exp_ratio=obs/exp,
              sample.type=ifelse(sample %in% input$seg.sample, 'target','other'))
-             
+           
     oer.median <- mutate(ddply(oer, .(bin, start_pos, end_pos), summarize, obs_exp_ratio=median(obs_exp_ratio)),
                          chrom=as.character(input$seg.chr), sample='site.median',
                          sample.type='median')
-    
+  
     oer <- rbind(select(oer, chrom, bin, start_pos, end_pos, sample, obs_exp_ratio, sample.type),oer.median)
     save(oer,file=sprintf('%s/oer.Rdata',tmp.dir))
     return(oer)  
@@ -514,12 +690,14 @@ shinyServer(function(input, output, session) {
   
   # helper functions for plotting
   xbounds <- reactive({
+    message('xbounds:',Sys.time())
     xmin = min(get.profile.segments()$start_pos)
     xmax = max(get.profile.segments()$end_pos)
     cat(sprintf("xmin=%s xmax=%s\n", xmin, xmax))
     coord_cartesian(xlim = c(xmin, xmax))
   })
   ylims <- reactive({
+    message('ylims:',Sys.time())
     ylim(min(get.profile.segments()$start_pos), max(get.profile.segments()$end_pos))
   })
   flip.bounds <- function(coord) {
@@ -528,21 +706,21 @@ shinyServer(function(input, output, session) {
   
   # display the rectangle segment plot of known, probes, array, and different predictions
   cnvPlot <- reactive({
-    cat("cnvPlot...\n")
-    
+    message('cnvPlot:',Sys.time())
+  
     cnv.disp <- cnv.disp()
     if (nrow(cnv.disp)==0) { return(NULL) }
     if (input$show_target_only && nrow(cnv.disp)>0) { cnv.disp <- subset(cnv.disp, target==TRUE | evidence=='Array') }
     cat("cnv.disp\n")
     print(head(cnv.disp))
     save(cnv.disp,file=sprintf('%s/cnv.disp.Rdata',tmp.dir))
-    
-    if (!input$show_readPairs) {
+  
+    if (is.null(input$show_readPairs) || !input$show_readPairs) {
       plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=cn.disp, size=target)) + cn.colors 
     } else {
       plt <- ggplot(cnv.disp, aes(x=start.map, xend=end.map, y=.id, yend=.id, color=paired.reads, size=target)) + scale_color_gradient2() 
     }
-    
+  
     if (nrow(subset(cnv.disp,evidence=='Array'))>0) {
       plt <- plt + geom_point(data=subset(cnv.disp, evidence=='Array'), size=5, color='black')
     }
@@ -550,39 +728,79 @@ shinyServer(function(input, output, session) {
   })
   
   cnvCIPlot <- reactive({
-    cat("cnvCIPlot...\n")
-    segs <- select(region.filter(cnv.mle), chr, end.map, start.map, 
-                   cn, .id, start.map.L, start.map.R, end.map.L, end.map.R, 
-                   method)
+    message('cnvCIPlot:',Sys.time())
+    
+    if (input$show_extended_ML) {
+      segs <- select(region.filter(cnv.mle), chr, end.map, start.map, 
+                     cn, .id, start.map.L, start.map.R, end.map.L, end.map.R, 
+                     method)
+    } else { segs <- data.frame() }
+
     if (input$show_bayes) {
       segs <- rbind(segs, select(region.filter(cnv.post), chr, 
                                  end.map, start.map, cn, .id, start.map.L = start.CI.L, 
                                  start.map.R = start.CI.R, end.map.L = end.CI.L, end.map.R = end.CI.R, 
                                  method))
     }
-    segs$target <- segs$.id %in% input$seg.sample
+    segs$cn.disp <- cn.label(segs$cn)
+    segs$target <- ifelse(segs$.id %in% input$seg.sample,'1','0')
     print(head(segs))
-    ggplot(segs, aes(x = .id, y = start.map, ymin = start.map.L, 
-                     ymax = start.map.R, color = target)) + geom_pointrange(size = 1.5) + 
+
+    if (input$color_frag == 'Selected') {
+      m <- aes(x = .id, y = start.map, ymin = start.map.L, ymax = start.map.R, color = target)
+      plot.colors <- scale_color_manual(name="Selected", values=c('1'="red",'0'="black"))
+    } else if (input$color_frag == 'By Genotype') {
+      m <- aes(x = .id, y = start.map, ymin = start.map.L, ymax = start.map.R, color = cn.disp)
+      plot.colors <- cn.colors
+    } else if (input$color_frag == 'By Family') {
+      segs$family <- family.label(segs$.id)
+      segs$.id <- sprintf("%s / %s", segs$family, segs$.id)
+      segs <- arrange(segs, .id)
+      m <- aes(x = .id, y = start.map, ymin = start.map.L, ymax = start.map.R, color = family)
+      plot.colors <- family.colors()  # scale_color_manual(name="Family", values=rainbow(length(unique(segs$family))))
+    } else if (input$color_frag == "By Sample") {
+      m <- aes(x = .id, y = start.map, ymin = start.map.L, ymax = start.map.R, color = .id)
+      plot.colors <- sample.colors()
+    }
+
+    ggplot(segs, m) + geom_pointrange(size = 1.5) + 
       geom_pointrange(aes(y = end.map, ymin = end.map.L, ymax = end.map.R), 
                       size = 1.5) + geom_segment(aes(y = start.map, yend = end.map, 
                                                      xend = .id), size = 1.5, linetype = 3) + 
+      plot.colors +
       theme(axis.title.x = element_blank(), 
             axis.title.y = element_blank(), plot.margin = unit(c(0, 0.75, 0, 0.1), "inches")) + guides(color = "none") + 
-      ylims() + coord_flip() + facet_grid(method ~ .)
+       ylims() + coord_flip() + facet_grid(method ~ .)
   })
-  
+
+ 
   fragPlot <- reactive({
-    cat("fragPlot...\n")
+    message('fragPlot:',Sys.time())
     df <- oer()
-    ggplot(df, aes(x=start_pos, y=obs_exp_ratio, group=sample)) + geom_step(color='grey') +
-      geom_step(data=df[df$sample.type=='median',], color='black') + 
-      geom_step(data=df[df$sample.type=='target',], color='red') +
-      theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0.5),'inches')) +
-      xbounds()
+
+    sample.subset <- function(samples) {
+      uniq.samples <- unique(samples)
+      uniq.samples[sample.int(length(uniq.samples), input$sample.bg.n)]
+    }
+
+    # first plot the background and median
+    p <- ggplot(filter(df, sample %in% sample.subset(df$sample)), aes(x=start_pos, y=obs_exp_ratio, group=sample)) + geom_step(color='grey') +
+         geom_step(data=df[df$sample.type=='median',], color='black') +
+         theme(axis.title.x = element_blank(), axis.title.y=element_blank(), plot.margin=unit(c(0,1,0,0.5),'inches')) +
+         xbounds()
+
+    if (input$color_frag == 'Selected') {
+      p + geom_step(data=df[df$sample.type=='target',], color='red')
+    } else if (input$color_frag == 'By Family') {
+      df$family <- family.label(df$sample)
+      p + geom_step(aes(color=family), data=df[df$sample.type=='target',]) + theme(legend.position="bottom") + family.colors()
+    } else if (input$color_frag == 'By Sample') {
+      p + geom_step(aes(color=sample), data=df[df$sample.type=='target',]) + theme(legend.position="bottom") + sample.colors()
+    }
   })
   
   bkptPriors <- reactive({
+    message('bkptPriors:',Sys.time())
     if (input$seg.end - input$seg.start > too.big) {
       cat(sprintf("Skipping profile - region too big %s > %s", 
                   input$seg.end - input$seg.start, too.big))
@@ -635,7 +853,7 @@ shinyServer(function(input, output, session) {
   })
   
   bayesPriorPlot <- reactive({
-    cat("bayesPriorPlot...\n")
+    message('bayesPriorPlot:',Sys.time())
     priors <- dbGetQuery(db$con, sprintf("SELECT p.region_id, p.start_pos, p.\"loss.u\", p.\"gain.u\", pr.side FROM prior p, prior_region pr, profile_segment ps1, profile_segment ps2 WHERE p.region_id=pr.id AND pr.chr=ps1.chrom AND pr.binL>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND pr.chr=ps2.chrom AND pr.binR<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s", 
                                          input$seg.chr, input$seg.start - input$pad, input$seg.start - 
                                            input$pad, input$seg.chr, input$seg.end + input$pad, 
@@ -653,7 +871,7 @@ shinyServer(function(input, output, session) {
   })
   
   posteriorPlot <- reactive({
-    cat("posteriorPlot...\n")
+    message('posteriorPlot:',Sys.time())
     posterior <- dbGetQuery(db$con, sprintf("SELECT po.start_pos, po.sample, po.\"loss.u\", po.\"gain.u\", po.loss, po.gain, po.bayes_loss, po.bayes_gain FROM posterior_dist po, profile_segment ps1, profile_segment ps2 WHERE po.chr=ps1.chrom AND po.bin>=ps1.bin AND ps1.chrom='%s' AND ps1.start_pos <= %s AND ps1.end_pos >= %s AND po.chr=ps2.chrom AND po.bin<=ps2.bin AND ps2.chrom='%s' AND ps2.start_pos <= %s AND ps2.end_pos >= %s AND po.sample IN ('%s')", 
                                             input$seg.chr, input$seg.start - input$pad, input$seg.start - 
                                               input$pad, input$seg.chr, input$seg.end + input$pad, 
@@ -674,7 +892,7 @@ shinyServer(function(input, output, session) {
   })
   
   bkptPlot <- reactive({
-    cat("bkptPlot...\n")
+    message('bkptPlot:',Sys.time())
     bkpt.prior <- bkptPriors()
     bkpt.prior.m <- mutate(melt(bkpt.prior, "start_pos", c("Lall_no_loss", 
                                                            "Lall_no_gain")), kind = ifelse(grepl("_ratio", variable), 
@@ -687,10 +905,10 @@ shinyServer(function(input, output, session) {
   })
   
   eachBkptPlot <- reactive({
-    cat("eachBkptPlot...\n")
+    message('eachBkptPlot:',Sys.time())
     bkpts <- bkpts.ll()
     if (nrow(bkpts)>0) {
-      
+    
       bkpts <- melt(bkpts, c('sample','start_pos','end_pos'),c('loss','gain')) 
       ggplot(bkpts, aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(sample~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.75,0,.25),'in'),legend.position="bottom") + ylab("Prob") + xbounds()
     } else {
@@ -701,6 +919,7 @@ shinyServer(function(input, output, session) {
   # merge frag and geno segments and color fragment by geno label
   # requires the windows to be the same size
   genoFragPlot <- reactive({
+    message('genoFragPlot:',Sys.time())
     oer.wg <- left_join(filter(oer(), sample.type != "median"), 
                         collect(get.geno()), by = c("bin", "sample"))
     oer.wg$cn <- as.numeric(as.character(oer.wg$cn))
@@ -711,38 +930,63 @@ shinyServer(function(input, output, session) {
                                     ifelse(oer.wg$cn > 5, 5, oer.wg$cn)), 
                              levels = c("0", "1", "2", "3", "4", "5", "99"), 
                              labels = c("0", "1", "2", "3", "4", "5+", "Disc"))
+    oer.wg$start_pos <- oer.wg$start_pos.x
+    oer.wg$end_pos <- oer.wg$end_pos.x
+    
+    print(head(oer.wg))
+
+    alpha <- c(target=1, other=0)
     ggplot(oer.wg, aes(x = start_pos, y = obs_exp_ratio, yend = obs_exp_ratio, 
-                       color = cn.disp, group = sample)) + geom_step() + cn.colors + 
-      theme(axis.title.x = element_blank(), plot.margin = unit(c(0, 1, 0, 0.5), "inches")) + 
-      xbounds() + guides(color = FALSE)
+                       alpha=sample.type, group = sample)) + geom_step(color='grey') + 
+      geom_step(data=oer.wg[oer.wg$sample.type=='target',], mapping=aes(color=cn.disp)) + 
+      cn.colors + 
+      theme(axis.title.y = element_blank(), axis.title.x = element_blank(), plot.margin = unit(c(0, 1, 0, 0.5), "inches")) + 
+      scale_alpha_manual(name = "sample.type",values = alpha) +
+      xbounds() + guides(color = FALSE, alpha=FALSE)
     })
 
   output$expPlot <- renderPlot({
-    expected <- frags()
-    colors <- c(target='#FF0000',other='#222222')
-    alpha <- c(target=1,other=0.2)
-    ggplot(expected, aes(x=start_pos,y=expected,group=sample,color=sample.type,alpha=sample.type)) + geom_line() +
-      theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0),'inches')) + 
-      scale_color_manual(name = "sample.type",values = colors) +
-      scale_alpha_manual(name = "sample.type",values = alpha) +
-      xbounds() + guides(color=FALSE,alpha=FALSE)
+    message('output$expPlot:',Sys.time())
+    if (no.pos()) {
+      NULL
+    } else {
+      expected <- frags()
+      colors <- c(target='#FF0000',other='#222222')
+      alpha <- c(target=1,other=0.2)
+      ggplot(expected, aes(x=start_pos,y=expected,group=sample,color=sample.type,alpha=sample.type)) + geom_line() +
+        theme(axis.title.x = element_blank(), plot.margin=unit(c(0,1,0,0),'inches')) + 
+        scale_color_manual(name = "sample.type",values = colors) +
+        scale_alpha_manual(name = "sample.type",values = alpha) +
+        xbounds() + guides(color=FALSE,alpha=FALSE)
+    }
   })
   
   output$seg.size <- renderText({ paste0(format((input$seg.end-input$seg.start)/1000,digits=4,nsmall=2),"kb") })
   
   output$allThree <- renderPlot({
+    message('output$allThree:',Sys.time())
     plots <- list()
-    if (input$show_cnv) { plots$cnv = cnvPlot() }
-    if (input$show_CI) { plots$CI = cnvCIPlot() }
-    if (input$show_frag) { if (input$color_frag) { plots$frag=genoFragPlot() } else { plots$frag = fragPlot() } }
-    if (input$show_each_bkpt) { plots$bkpt = eachBkptPlot() }
-    if (input$show_bayes_prior) { p <- bayesPriorPlot(); if (!is.null(p)) { plots$bayes.prior=p } }
-    if (input$show_posterior) { p <- posteriorPlot(); if (!is.null(p)) { plots$posterior=p} }
+    if (no.pos()) {
+      plots$void = ggplot(data.frame(x=0,y=0,label="Choose a Predicted CNV, Saved Site or Enter Coordinates")) + geom_text(aes(x=x,y=y,label=label)) + theme_void()
+    } else {
+      if (input$show_cnv) { plots$cnv = cnvPlot() }
+      if (input$show_CI) { plots$CI = cnvCIPlot() }
+      if (input$show_frag) { if (input$color_frag=='By Genotype') { plots$frag=genoFragPlot() } else { plots$frag = fragPlot() } }
+      if (input$show_each_bkpt) { plots$bkpt = eachBkptPlot() }
+      if (input$show_bayes_prior) { p <- bayesPriorPlot(); if (!is.null(p)) { plots$bayes.prior=p } }
+      if (input$show_posterior) { p <- posteriorPlot(); if (!is.null(p)) { plots$posterior=p} }
+    }
+    message('output$allThree:',Sys.time())
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
   })
   
   output$cnqs <- renderPlot({
-    wg <- filter(get.geno(), sample %in% c('',input$seg.sample))
+    message('output$cnqs:',Sys.time())
+    wg <- filter(get.geno(), sample %in% c('',input$seg.sample)) %>% collect(n=too.many)
+    wg$row.id <- 1:nrow(wg)
+    wg$selected <- wg$row.id %in% input$profile.table_rows_selected
+    wg$cn <- ifelse(is.na(wg$cn),'NA',wg$cn)
+    
     if (USE_KNOWNS) {
       gs.dels <- subset(gs.dels(), .id %in% input$seg.sample)
     } else {
@@ -750,7 +994,7 @@ shinyServer(function(input, output, session) {
     }
 
     plots <- lapply(input$seg.sample, function(this.sample) {
-      p <- ggplot(collect(filter(wg, sample==this.sample)), aes(x=start,y=cnq, color=as.factor(cn))) + geom_point(size=3) + cn.colors + ggtitle(this.sample)
+      p <- ggplot(filter(wg, sample==this.sample), aes(x=start_pos,y=cnq, size=selected, color=as.factor(cn))) + geom_point() + cn.colors + ggtitle(this.sample)
       gs.dels.id <- filter(gs.dels, .id==this.sample) 
       if (nrow(gs.dels.id)==0) {
         p
@@ -760,10 +1004,11 @@ shinyServer(function(input, output, session) {
       }     
     })
     grid.arrange(do.call(arrangeGrob,c(plots,list(ncol=1))))
-    
+  
   })
   
   bkpts.bayes <- reactive({
+    message('bkpts.bayes:',Sys.time())
     bkpt.prior <- bkptPriors()
     bkpts <- bkpts.ll()
     bkpt.mrg <- mutate(merge(bkpt.prior, bkpts), 
@@ -798,8 +1043,9 @@ shinyServer(function(input, output, session) {
   })
   
   output$bkpts <- renderPlot({
+    message('output$bkpts:',Sys.time())
     bkpt.mrg <- bkpts.bayes()
-        
+      
     if (input$show_probs == 'probs') {
       show.vars <- c('bayes_loss','some_loss','loss','bayes_gain','some_gain','gain','no_bkpt')
     } else if (input$show_probs == 'no') {
@@ -811,7 +1057,7 @@ shinyServer(function(input, output, session) {
     }
     bkpts.plt <- melt(bkpt.mrg, c('sample','start_pos','end_pos'), show.vars)
     bkpts.plt <- mutate(bkpts.plt, kind=ifelse(grepl('loss',variable),'Loss',ifelse(grepl('gain',variable),'Gain','NC')))
-        
+      
     last.sample <- input$seg.sample[length(input$seg.sample)]
     plots <- lapply(input$seg.sample, function(this.sample) {
       p <- ggplot(subset(bkpts.plt, sample==this.sample), aes(x=start_pos, y=value, color=variable)) + geom_point() + geom_line() + facet_grid(kind~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.35,0,.35),'in'),legend.position="bottom") + ggtitle(this.sample) 
@@ -824,9 +1070,15 @@ shinyServer(function(input, output, session) {
     grid.arrange(do.call(arrangeGrob, c(plots,list(ncol=1))))
   })
 
+  output$profile.table <- DT::renderDataTable({
+    message(Sys.time(),': output$profile.table')
+    return(collect(filter(get.geno(), sample %in% c('',input$seg.sample)), n=too.many))
+  }, server=FALSE)
+  
   output$bkpt.odds <- renderPlot({
+    message('output$bkpt.odds:',Sys.time())
     bkpt.mrg <- bkpts.bayes()
-    
+  
     if (input$show_bayes_odds == 'bayesZ') {
       show.vars <- c('bayes.loss.ratioZ','bayes.gain.ratioZ')
     } else if (input$show_bayes_odds == 'bayes') {
@@ -838,7 +1090,7 @@ shinyServer(function(input, output, session) {
     bkpts.plt <- melt(bkpt.mrg, c('sample','start_pos','end_pos'), show.vars)
     bkpts.plt <- mutate(bkpts.plt, kind=ifelse(grepl('loss',variable),'Loss',ifelse(grepl('gain',variable),'Gain','NC')),
                         pos=value>0)
-    
+  
     last.sample <- input$seg.sample[length(input$seg.sample)]
     plots <- lapply(input$seg.sample, function(this.sample) {
       p <- ggplot(subset(bkpts.plt, sample==this.sample), aes(x=start_pos, y=value, color=pos, group=variable)) + geom_point() + geom_line() + geom_hline(yintercept=0) + facet_grid(kind~.) + theme(axis.title.x = element_blank(),plot.margin=unit(c(0,0.35,0,.35),'in'),legend.position="bottom") + ggtitle(this.sample) 

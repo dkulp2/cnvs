@@ -1,11 +1,19 @@
 # create a table containing the samples in each family quartet
 
-library(dplyr)
 library(RPostgreSQL)
+library(plyr)
+library(dplyr)
+
 db <- src_postgres()
 
-ped.fn <- '/humgen/cnp04/bobh/projects/locus_SMN/cohort_sfari/sample_pedigrees.ped'
+cmd.args <- commandArgs(trailingOnly = TRUE)
+ped.fn <- cmd.args[1]
+schema.name <- cmd.args[2]
+
 ped <- read.table(ped.fn, col.names=c('family','sample','parent1','parent2','gender','casecontrol'), stringsAsFactors = FALSE)
+
+dbGetQuery(db$con, sprintf("set search_path=sfari_%s", schema.name))
+print(dbGetQuery(db$con, "show search_path"))
 
 gender <- function(num) { as.factor(ifelse(num==1,'M','F')) }
 quartets <- ddply(ped, .(family), function(df) { 
@@ -23,4 +31,5 @@ quartets <- ddply(ped, .(family), function(df) {
   }
 })
 
-copy_to(db, quartets, temporary=FALSE)
+dbWriteTable(db$con, 'quartets', quartets)
+
