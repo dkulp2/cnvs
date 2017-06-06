@@ -1,0 +1,138 @@
+#!/usr/bin/env perl
+
+use strict;
+use Pod::Usage;
+use Getopt::Long;
+use FileHandle;
+
+# 'psql' used instead of DBI. This is because I would need to know the
+# schema in order to properly query the information_schema.columns
+# table. There's no simple way to determine the search_path (e.g.
+# it might be in PGOPTIONS, set in .psqlrc, part of a system-wide
+# default, or not set at all.
+#
+# But there remains a problem that any \echo commands in .psqlrc are written
+# to stdout, so I use a fifo to capture the streaming table dump.
+#
+# It may be faster to provide a named output file as a command line
+# option so that psql can write directly to the file instead of
+# buffering data between processes and then to disk.
+
+use POSIX qw(mkfifo);
+use FileHandle;
+
+my ($tableNameOverride, $append, $help);
+pod2usage(1) if $help;
+
+GetOptions("n|name=s" => \$tableNameOverride,
+	   "a|append" => \$append,
+	   "h|help" => \$help) || pod2usage(2);
+
+my $fifoFN = "/tmp/pgwrite.$$.".time();
+mkfifo($fifoFN, 0700) or die "$fifoFN: $!";
+pod2usage("$0: Too many files given.\n") unless (@ARGV == 1);
+
+my $table = $ARGV[0];
+$tableNameOverride = $table unless $tableNameOverride;
+
+my $psqlFH = new FileHandle "psql -c '\\d $table' |" or die $!;
+
+my $inPreamble = 1;
+my $inIndexes = 0;
+
+my ($schema, %keys, @colNames, %columns);
+
+if (!$append) {
+    while (<$psqlFH>) {
+	chomp;
+	if (/^\s+Table "(\S+)\.$table"/) { $schema = $1; }
+	if (!$inPreamble) {
+	    if ($inIndexes) {
+		last unless /"/;
+		my ($unique, $keynames) = (/\s*"\S+" (UNIQUE|PRIMARY KEY)?.*\((.*)\)/);
+		$keys{$keynames} = (length($unique)>0);
+	    }
+	    else {
+		if (/^Indexes:/) {
+		    $inIndexes = 1;
+		} else {
+		    my ($colName, $colType) = (/^\s*(\S+)\s*\|\s*(.+)\|/);
+		    $colType =~ s/\s+$//;
+		    $columns{$colName} = $colType;
+		    push(@colNames, $colName);
+		}
+	    }
+	}
+	if (/^[\-\+]+$/) { $inPreamble = 0; }
+    }
+
+    print "#$tableNameOverride: ";
+    print join(',', map { "$_\{$columns{$_}\}" } @colNames);
+    if (%keys) {
+	print "; ";
+	print join(' ', map { ($keys{$_}?'[':'(') . $_ . ($keys{$_}?']':')') } keys %keys ), "\n";
+    }
+}
+
+my $cmd = "psql -X -q -c \"\\copy ${table} TO '$fifoFN' CSV DELIMITER E'\\t'\" &";
+system($cmd);
+
+$psqlFH = new FileHandle "< $fifoFN" or die "$fifoFN: $!";
+while (<$psqlFH>) {
+    print;
+}
+
+    
+
+__END__
+
+=head1 NAME
+
+pgWrite - create a delimited data file with metadata
+
+=head1 SYNOPSIS
+
+pgWrite table > table.txt
+pgWrite -a table2 >> table.txt
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<-n|--name tablename>
+
+Replace the database table name with B<tablename> in the output file.
+
+=item B<-a|--append>
+
+Do not write the header. Intended to be used when appending to an existing
+file in the same format.
+
+=item B<-h|--help>
+
+Displays this help. Use "pod2usage -man pgRead" for full documentation.
+
+=back
+
+=head1 DESCRIPTION
+
+B<pgWrite> will create a tab-delimited dump of the specified table
+with a special metadata header for interoperable data exchange. The
+metadata format is described elsewhere.
+
+A connection to a PostgreSQL database is made with no parameters using
+the command line tool 'psql'.  The caller is responsible to set the
+appropriate environment variables (PGHOST, PGOPTIONS, etc.) to make
+the appropriate connection, including a search_path for schema
+designation.
+
+=head1 EXAMPLES
+
+ pgWrite cnv > cnv.txt
+ pgWrite cnv | gzip -c > cnv.txt.gz
+
+=head2 Author
+
+David Kulp I<dkulp@broadinstitute.org>
+
+=cut
